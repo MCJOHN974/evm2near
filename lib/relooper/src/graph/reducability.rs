@@ -35,6 +35,7 @@ impl Node {
 pub struct Graph {
     id2node: HashMap<CfgLabel, Node>,
     next_id: CfgLabel,
+    entry: CfgLabel,
     terminal: CfgLabel,
 }
 
@@ -43,11 +44,14 @@ impl Graph {
         Graph {
             id2node: HashMap::new(),
             next_id: 0,
+            entry: 0,
             terminal: 0,
         }
     }
 
     pub fn build_from(&mut self, cfg: &Cfg) -> &Graph {
+        self.entry = cfg.entry;
+
         for (label, edge) in &cfg.out_edges {
             if label >= &self.next_id {
                 self.next_id = *label;
@@ -139,7 +143,10 @@ impl Graph {
             }
         }
         out_edges.insert(self.terminal, CfgEdge::Terminal);
-        return Cfg { out_edges };
+        return Cfg {
+            out_edges,
+            entry: self.entry,
+        };
     }
 
     pub fn add_vertex(&mut self, id: CfgLabel) -> () {
@@ -206,6 +213,7 @@ struct Supergraph {
     clone2origin: HashMap<CfgLabel, CfgLabel>, // clone2origin[x] = y means that cfg node with id=x was clonned from cfg node with id=y;
     next_id: SuperNodeId,
     next_cfg_id: CfgLabel,
+    entry: CfgLabel,
     terminal: CfgLabel,
 }
 
@@ -213,6 +221,7 @@ impl Supergraph {
     pub fn build(mut self, c: &Cfg) -> Supergraph {
         let mut g = Graph::new();
         g.build_from(c);
+        self.entry = g.entry;
         self.terminal = g.terminal;
         for (_id, cfg_node) in &g.id2node {
             let tmp = SuperNode::default();
@@ -424,12 +433,13 @@ impl Supergraph {
                 id2n.insert(cid, cnode);
             }
         }
-        return Graph {
+        Graph {
             id2node: (id2n),
             next_id: (self.next_cfg_id),
+            entry: self.entry,
             terminal: self.terminal,
         }
-        .cfg();
+        .cfg()
     }
 
     pub fn delete_edge(&mut self, from: CfgLabel, to: CfgLabel, edge: ProperEdge) -> () {
@@ -480,25 +490,24 @@ impl Supergraph {
 #[test]
 pub fn test_reducer() -> () {
     println!("test reducer");
-    let graph = Cfg::from(vec![
-        (0, 1, true),
-        (0, 2, false),
-        (1, 3, true),
-        (2, 3, false),
-        (3, 4, false),
-        (1, 5, false),
-        (5, 6, true),
-        (5, 7, false),
-        (6, 8, false),
-        (7, 8, false),
-        (4, 9, false),
-        (8, 9, true),
-        (8, 5, false),
-    ]);
+    let graph = Cfg::from_edges(
+        vec![
+            (0, CfgEdge::Cond(1, 2)),
+            (1, CfgEdge::Cond(3, 5)),
+            (2, CfgEdge::Uncond(3)),
+            (3, CfgEdge::Uncond(4)),
+            (5, CfgEdge::Cond(6, 7)),
+            (6, CfgEdge::Uncond(8)),
+            (7, CfgEdge::Uncond(8)),
+            (4, CfgEdge::Uncond(9)),
+            (8, CfgEdge::Cond(9, 5)),
+        ],
+        0,
+    );
     let e_graph = Cfg::from(graph);
     let reducable = reducable(&e_graph);
-    let enriched = EnrichedCfg::new(reducable, 0);
-    let enriched_irr = EnrichedCfg::new(e_graph, 0);
+    let enriched = EnrichedCfg::new(reducable);
+    let enriched_irr = EnrichedCfg::new(e_graph);
     let dot_lines: Vec<String> = vec![
         "digraph {".to_string(),
         enriched_irr.cfg_to_dot(),

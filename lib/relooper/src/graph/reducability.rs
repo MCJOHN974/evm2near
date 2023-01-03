@@ -504,7 +504,7 @@ impl Supergraph {
         // }
 
         // BUG!!!
-        // solution : 
+        // solution :
         // here i should not delete any edges from global graph, just from clonned node.
         // all edges in cloned node should have proper (from, to). When i make simple clone them are wrong
         // i should add this edges to other nodes of this edges
@@ -532,14 +532,17 @@ pub fn test_reducer() -> () {
         ],
         0,
     );
-    let e_graph = Cfg::from(graph);
+    let e_graph = Cfg::from(graph.unwrap());
     let reducable = reducable(&e_graph);
 
     println!("Graph after reducing:\n");
     for (node, edge) in &reducable.out_edges {
         match edge {
             CfgEdge::Cond(cond, ucond) => {
-                println!("Node {} has cond edge to {} and uncond to {}", node, cond, ucond);
+                println!(
+                    "Node {} has cond edge to {} and uncond to {}",
+                    node, cond, ucond
+                );
             }
             CfgEdge::Uncond(to) => {
                 println!("Node {} has uncond edge to {}", node, to);

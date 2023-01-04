@@ -3,11 +3,25 @@ use std::collections::{HashMap, HashSet};
 use std::iter::once;
 
 pub type CfgLabel = usize;
+
 #[derive(Copy, Clone)]
 pub enum CfgEdge {
     Uncond(CfgLabel),
     Cond(CfgLabel, CfgLabel),
     Terminal,
+}
+
+impl CfgEdge {
+    fn try_parse(str: &str) -> Result<CfgEdge, String> {
+        let split_v = str.split(' ').map(|s| s.to_string()).collect::<Vec<_>>();
+        match &split_v[..] {
+            [to] => Cfg::try_parse_label(to).map(Uncond),
+            [t, f] => {
+                Cfg::try_parse_label(t).and_then(|t| Cfg::try_parse_label(f).map(|f| Cond(t, f)))
+            }
+            _ => Err("invalid edge description".to_string()),
+        }
+    }
 }
 
 impl CfgEdge {
@@ -26,16 +40,17 @@ pub struct Cfg {
 }
 
 impl Cfg {
-    pub fn from_edges(
-        edges: Vec<(CfgLabel, CfgEdge)>,
-        entry: CfgLabel,
-    ) -> Result<Self, &'static str> {
+    fn try_parse_label(str: &str) -> Result<CfgLabel, String> {
+        str.parse::<usize>().map_err(|err| err.to_string())
+    }
+
+    pub fn from_edges(edges: Vec<(CfgLabel, CfgEdge)>, entry: CfgLabel) -> Result<Self, String> {
         let mut out_edges = HashMap::new();
         let mut nodes = HashSet::new();
         for (from, edge) in edges {
             let old_val = out_edges.insert(from, edge);
             if old_val.is_some() {
-                return Err("repeating source node");
+                return Err("repeating source node".to_string());
             }
             nodes.insert(from);
             nodes.extend(edge.to_vec());
@@ -48,35 +63,27 @@ impl Cfg {
         Ok(Self { out_edges, entry })
     }
 
-    pub fn from_strings(strings: Vec<String>) -> Result<Self, &'static str> {
-        let entry = strings
-            .get(0)
-            .ok_or("no entry line specified")
-            .and_then(|e_str| e_str.parse::<usize>().map_err(|x| "invalid entry format"))?;
-        let edges: Vec<_> = strings
-            .iter()
-            .skip(1)
-            .map(|s| {
-                let split: Vec<_> = s.split(" ").map(|s| s.parse::<usize>()).collect();
-                let split_r: Result<Vec<_>, _> = split.into_iter().collect();
-
-                split_r
-                    .map_err(|_err| "usize parse error")
-                    .and_then(|split_v| {
-                        let from = split_v[0];
-
-                        let edge = match split_v[1..] {
-                            [to] => Ok(Uncond(to)),
-                            [t, f] => Ok(Cond(t, f)),
-                            _ => Err("invalid edge description"),
-                        };
-                        edge.map(|e| (from, e))
+    pub fn from_strings(strings: Vec<String>) -> Result<Self, String> {
+        match &strings[..] {
+            [entry, edges @ ..] => {
+                let entry = Self::try_parse_label(entry)?;
+                let edges_vec_res: Vec<_> = edges
+                    .iter()
+                    .map(|s| {
+                        s.split_once(' ')
+                            .ok_or_else(|| "invalid label-edge format".to_string())
+                            .and_then(|(from, edge)| {
+                                Self::try_parse_label(from)
+                                    .and_then(|f| CfgEdge::try_parse(edge).map(|e| (f, e)))
+                            })
                     })
-            })
-            .collect();
-        let edges_result: Result<Vec<(CfgLabel, CfgEdge)>, _> = edges.into_iter().collect();
-
-        edges_result.and_then(|edges| Self::from_edges(edges, entry))
+                    .collect();
+                //TODO this is too obscure and ugly. the only purpose is to convert Vec<Res<>> to Res<Vec<>>
+                let edges_res_vec: Result<Vec<_>, _> = edges_vec_res.into_iter().collect();
+                edges_res_vec.and_then(|edges| Cfg::from_edges(edges, entry))
+            }
+            _ => Err("well-formed cfg should contain entry line and at least one edge".to_string()),
+        }
     }
 
     pub fn nodes(&self) -> HashSet<CfgLabel> {

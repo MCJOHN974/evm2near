@@ -409,7 +409,7 @@ pub fn test_irreducible4() {
     let e_graph = EnrichedCfg::new(reduced);
     let dot_lines: Vec<String> = vec![
         "digraph {".to_string(),
-        e_graph.cfg_to_dot(),
+        e_graph.cfg_to_dot("reduced"),
         "}".to_string(),
     ];
     std::fs::write("reduced4.dot", dot_lines.join("\n")).expect("fs error");

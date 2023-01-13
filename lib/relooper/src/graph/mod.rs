@@ -6,16 +6,16 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::vec::Vec;
 
 pub mod cfg;
+mod cfg_mut;
 mod cfg_parsing;
 mod dot_debug;
 mod enrichments;
-pub mod reducability;
+pub mod reducibility;
 pub(crate) mod relooper;
 pub(crate) mod supergraph;
 
 pub struct EnrichedCfg<TLabel: CfgLabel> {
     cfg: Cfg<TLabel>,
-    back_edges: HashMap<TLabel, Vec<TLabel>>,
     node_ordering: NodeOrdering<TLabel>,
     domination: DomTree<TLabel>,
     merge_nodes: HashSet<TLabel>,
@@ -25,8 +25,6 @@ pub struct EnrichedCfg<TLabel: CfgLabel> {
 
 impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
     pub fn new(cfg: Cfg<TLabel>) -> Self {
-        let in_edges = cfg.in_edges();
-
         let node_ordering = NodeOrdering::new(&cfg, cfg.entry);
 
         let mut merge_nodes: HashSet<TLabel> = HashSet::new();
@@ -34,7 +32,7 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
         let mut if_nodes: HashSet<TLabel> = HashSet::new();
 
         for n in cfg.nodes() {
-            let in_edges_count = in_edges.get(&n).map_or(0, |v| {
+            let in_edges_count = cfg.in_edges.get(&n).map_or(0, |v| {
                 v.iter()
                     .filter(|&&from| node_ordering.is_forward(from, n))
                     .count()
@@ -62,7 +60,6 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
 
         Self {
             cfg,
-            back_edges: in_edges,
             node_ordering,
             domination,
             merge_nodes,

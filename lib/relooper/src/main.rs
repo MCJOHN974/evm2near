@@ -1,48 +1,69 @@
-mod cfg;
-mod debug_view;
-mod re_graph;
-mod relooper;
+extern crate core;
+
+mod graph;
 mod traversal;
 
-use crate::cfg::{Cfg, CfgLabel};
-use crate::re_graph::{ReBlock, ReGraph, ReLabel};
-use crate::traversal::graph::dfs::Dfs;
+use crate::graph::cfg::{Cfg, CfgLabel};
+use crate::graph::supergraph::SuperGraph;
+use crate::graph::{supergraph, EnrichedCfg};
+use std::env;
+use std::fmt::{Debug, Display, Formatter};
+use std::path::Path;
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Hash)]
+struct UsizeLabel(usize);
+
+impl Debug for UsizeLabel {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Display for UsizeLabel {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl CfgLabel for UsizeLabel {}
+impl TryFrom<&str> for UsizeLabel {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let result = value.parse::<usize>().map(UsizeLabel)?;
+        Ok(result)
+    }
+}
 
 pub fn main() {
-    use std::fs::File;
+    let args: Vec<String> = env::args().collect();
 
-    let graph = Cfg::from(vec![
-        (0, 1, true),
-        (0, 2, false),
-        (1, 3, true),
-        (2, 3, false),
-        (3, 4, false),
-        (1, 5, false),
-        (5, 6, true),
-        (5, 7, false),
-        (6, 8, false),
-        (7, 8, false),
-        (4, 9, false),
-        (8, 9, true),
-        (8, 5, false),
-    ]);
-    // let graph = Cfg::from(vec![(0, 1), (0, 2), (1, 3), (1, 4), (1, 5), (2, 6), (6, 7)]);
+    assert_eq!(args.len(), 2);
 
-    let mut f_cfg = File::create("cfg.dot").unwrap();
-    dot::render(&graph, &mut f_cfg).unwrap();
+    let input_path = Path::new(args.get(1).unwrap());
+    let output_path = input_path.with_extension("dot");
 
-    let dfs: Vec<_> = Dfs::start_from(0 as CfgLabel, |&n| graph.children(n).into_iter()).collect();
-    println!("dfs: {:?}", dfs);
+    let input = std::fs::read_to_string(input_path).expect("unable to read input file");
+    let lines: Vec<String> = input.split("\n").map(|x| x.to_string()).collect();
 
-    // let re_builder = ReBuilder::create(&graph, 0);
-    // let re_graph = re_builder.reloop();
+    let graph: Cfg<UsizeLabel> = Cfg::try_from(&lines).expect("invalid input formatting");
 
-    // let mut f_relooped = File::create("relooped.dot").unwrap();
-    // dot::render(&re_graph, &mut f_relooped).unwrap();
+    let reduced_graph = supergraph::reduce(&graph);
 
-    // let start = 0 as CfgLabel;
-    // let res_b = BfsGraph::start_from(&start).traverse(|x| graph.0.get(x).into_iter().flatten());
-    // println!("Bfs:{:?}", res_b);
-    // let res_d = DfsGraph::start_from(&start).traverse(|x| graph.0.get(x).into_iter().flatten());
-    // println!("Dfs:{:?}", res_d);
+    let e_graph = EnrichedCfg::new(reduced_graph);
+    let relooped = e_graph.reloop();
+
+    let dot_lines: Vec<String> = vec![
+        "digraph {".to_string(),
+        graph.cfg_to_dot("cfg"),
+        String::new(),
+        e_graph.cfg_to_dot("reduced"),
+        String::new(),
+        e_graph.dom_to_dot(),
+        String::new(),
+        relooped.to_dot(),
+        "}".to_string(),
+    ];
+
+    std::fs::write(output_path, dot_lines.join("\n")).expect("fs error");
 }

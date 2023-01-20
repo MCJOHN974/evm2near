@@ -42,8 +42,8 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
             }
 
             let reachable: HashSet<_> =
-                Bfs::start_from_except(n, |&l| cfg.children(l).into_iter().copied()).collect();
-            for &c in cfg.children(n).into_iter() {
+                Bfs::start_from_except(n, |&l| cfg.children(&l).into_iter().copied()).collect();
+            for &c in cfg.children(&n).into_iter() {
                 if node_ordering.is_backward(n, c) && reachable.contains(&c) {
                     loop_nodes.insert(c);
                 }
@@ -90,7 +90,7 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
             visited.insert(cur_id);
             bfs.pop_front().unwrap();
             Self::update_dominators(cfg, node_ordering, cur_id, begin, &mut result);
-            for &id in cfg.children(cur_id) {
+            for &id in cfg.children(&cur_id) {
                 if !visited.contains(&id) {
                     bfs.push_back(id);
                 }
@@ -112,7 +112,7 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
         }
 
         let reached = Dfs::start_from(origin, |&n| {
-            let mut ch = cfg.children(n);
+            let mut ch = cfg.children(&n);
             ch.remove(&cur_id);
             ch.into_iter().copied()
         });

@@ -13,27 +13,22 @@ pub struct SLabel<TLabel: CfgLabel> {
     version: SVersion,
 }
 
-impl<TLabel: CfgLabel> Display for SLabel<TLabel> {
+impl<TLabel: CfgLabel + Display> Display for SLabel<TLabel> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}_{}", self.origin, self.version)
+        write!(f, "{}_{}", self.origin, self.version)
     }
 }
 
-impl<TLabel: CfgLabel> Debug for SLabel<TLabel> {
+impl<TLabel: CfgLabel + Debug> Debug for SLabel<TLabel> {
     // why debug isnt automatically derived from display?
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}_{}", self.origin, self.version)
     }
 }
 
-impl<TLabel: CfgLabel> CfgLabel for SLabel<TLabel> {}
-
 impl<TLabel: CfgLabel> From<TLabel> for SLabel<TLabel> {
     fn from(origin: TLabel) -> Self {
-        Self {
-            origin, //todo rename to origin
-            version: 0,
-        }
+        Self { origin, version: 0 }
     }
 }
 
@@ -64,192 +59,94 @@ impl<TLabel: CfgLabel> SNode<TLabel> {
     }
 }
 
-pub struct SuperGraph<TLabel: CfgLabel> {
-    entry: SLabel<TLabel>,
-    labels: BTreeMap<TLabel, Vec<SLabel<TLabel>>>,
-    nodes: BTreeMap<SLabel<TLabel>, SNode<TLabel>>,
-    in_edges: HashMap<SLabel<TLabel>, HashSet<SLabel<TLabel>>>,
-    out_edges: HashMap<SLabel<TLabel>, HashSet<SLabel<TLabel>>>,
-    label_location: BTreeMap<SLabel<TLabel>, SLabel<TLabel>>,
+type SNodeLabel<TLabel> = SLabel<TLabel>;
+
+pub struct SuperGraph<TLabel: CfgLabel + Debug> {
+    cfg: Cfg<SLabel<TLabel>>,
+    versions: BTreeMap<TLabel, usize>,
+    nodes: BTreeMap<SNodeLabel<TLabel>, SNode<TLabel>>,
+    label_location: BTreeMap<SLabel<TLabel>, SNodeLabel<TLabel>>,
 }
 
 type SplitInto<TLabel> = Vec<SLabel<TLabel>>;
 
+#[derive(Debug)]
 enum NodeAction<TLabel: CfgLabel> {
     MergeInto(SLabel<TLabel>),
     SplitFor(SplitInto<TLabel>),
 }
 
-impl<TLabel: CfgLabel> SuperGraph<TLabel> {
+impl<TLabel: CfgLabel> CfgEdge<TLabel> {
+    fn redirect<F>(&self, redirection: F) -> CfgEdge<TLabel>
+    where
+        F: Fn(TLabel) -> TLabel,
+    {
+        match self {
+            Uncond(to) => Uncond(redirection(*to)),
+            Cond(t, f) => Cond(redirection(*t), redirection(*f)),
+            Terminal => Terminal,
+        }
+    }
+}
+
+impl<TLabel: CfgLabel + Debug> SuperGraph<TLabel> {
     pub(crate) fn new(cfg: &Cfg<TLabel>) -> Self {
-        let nodes: BTreeMap<SLabel<TLabel>, SNode<TLabel>> = cfg
+        let new_cfg = cfg.map_label(|&l| SLabel::from(l));
+
+        let nodes: BTreeMap<SLabel<TLabel>, SNode<TLabel>> = new_cfg
             .nodes()
             .iter()
-            .map(|&n| {
-                let label = SLabel::from(n);
-                (label, SNode::from(label))
-            })
+            .copied()
+            .map(|&l| (l, SNode::from(l)))
             .collect();
 
         let label_location: BTreeMap<SLabel<TLabel>, SLabel<TLabel>> =
             nodes.iter().map(|(&l, _n)| (l, l)).collect();
 
-        let labels: BTreeMap<TLabel, Vec<SLabel<TLabel>>> = label_location
-            .iter()
-            .map(|(&l, _)| (l.origin, vec![l]))
-            .collect();
-
-        let out_edges = cfg
-            .out_edges
-            .iter()
-            .map(|(&f, v_t)| {
-                (
-                    SLabel::from(f),
-                    v_t.to_vec().iter().map(|&l| SLabel::from(l)).collect(),
-                )
-            })
-            .collect();
-
-        let in_edges = cfg
-            .in_edges
-            .iter()
-            .map(|(&t, v_f)| {
-                (
-                    SLabel::from(t),
-                    v_f.iter().map(|&l| SLabel::from(l)).collect(),
-                )
-            })
-            .collect();
+        let versions: BTreeMap<TLabel, usize> =
+            label_location.iter().map(|(&l, _)| (l.origin, 0)).collect();
 
         Self {
-            entry: cfg.entry.into(),
-            labels,
+            cfg: new_cfg,
+            versions,
             nodes,
-            out_edges,
-            in_edges,
             label_location,
         }
     }
 
-    fn add_edge(&mut self, from: SLabel<TLabel>, to: SLabel<TLabel>) {
-        self.out_edges.entry(from).or_default().insert(to);
-        self.in_edges.entry(to).or_default().insert(from);
-    }
-
-    fn remove_edge(&mut self, from: SLabel<TLabel>, to: SLabel<TLabel>) {
-        self.out_edges
-            .entry(from)
-            .and_modify(|set| assert!(set.remove(&to)));
-        self.in_edges
-            .entry(to)
-            .and_modify(|set| assert!(set.remove(&from)));
-    }
-
-    fn remove_node(&mut self, node: SLabel<TLabel>) {
-        let o_back = self
-            .out_edges
-            .get(&node)
-            .into_iter()
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        let i_back = self
-            .in_edges
-            .get(&node)
-            .into_iter()
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        for o in o_back {
-            self.in_edges
-                .entry(o)
-                .and_modify(|set| assert!(set.remove(&node)));
-        }
-        for i in i_back {
-            self.out_edges
-                .entry(i)
-                .and_modify(|set| assert!(set.remove(&node)));
-        }
-
-        self.out_edges.remove(&node);
-        self.in_edges.remove(&node);
-    }
-
-    fn outgoing_edges(&self, node: &SNode<TLabel>) -> BTreeSet<&SNode<TLabel>> {
-        node.contained
-            .iter()
-            .flat_map(|inner| {
-                self.out_edges.get(inner).into_iter().flatten().map(|l| {
-                    self.label_location
-                        .get(l)
-                        .and_then(|snode_label| self.nodes.get(snode_label))
-                        .unwrap()
-                })
-            })
-            .filter(|x| *x != node)
-            .collect()
-    }
-
-    // TODO unify with `outgoing_edges`?
-    fn incoming_edges(&self, node: &SNode<TLabel>) -> BTreeSet<&SNode<TLabel>> {
-        node.contained
-            .iter()
-            .flat_map(|inner| {
-                self.in_edges.get(inner).into_iter().flatten().map(|l| {
-                    self.label_location
-                        .get(l)
-                        .and_then(|snode_label| self.nodes.get(snode_label))
-                        .unwrap()
-                })
-            })
-            .filter(|x| *x != node)
-            .collect()
-    }
-
-    fn edges_between(
-        &self,
-        snode_from: &SNode<TLabel>,
-        snode_to: &SNode<TLabel>,
-    ) -> BTreeMap<SLabel<TLabel>, SLabel<TLabel>> {
-        snode_from
-            .contained
-            .iter()
-            .filter_map(|&inner| {
-                self.out_edges.get(&inner).and_then(|to_set| {
-                    let to: Vec<SLabel<TLabel>> = to_set
-                        .into_iter()
-                        .filter(|points_to| snode_to.contained.contains(points_to))
-                        .copied()
-                        .collect();
-
-                    assert!(to.len() <= 1); // there can be no edges or only one edge to head of given `snode_to`
-                    if to.len() == 1 {
-                        let &single = to.get(0).unwrap();
-                        Some((inner, single))
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect()
-    }
-
+    /// We are using that order for traversing supernodes graph for choosing between merge/split actions
     fn snode_order(&self) -> Vec<SLabel<TLabel>> {
-        let start = self.nodes.get(&self.entry).unwrap().clone();
+        let start = self.nodes.get(&self.cfg.entry).unwrap().clone();
         let res: Vec<_> = dfs_post_ord(start.head, &mut |slabel| {
             let snode = self.nodes.get(slabel).unwrap();
-            self.outgoing_edges(snode)
-                .iter()
-                .map(|n| n.head)
-                .collect::<Vec<_>>()
+            snode.contained.iter().flat_map(|l| {
+                self.cfg
+                    .children(l)
+                    .into_iter()
+                    .map(|to| *self.label_location.get(to).unwrap())
+            })
         })
         .into_iter()
         .collect();
         res
     }
 
-    fn node_action(&self, node: &SNode<TLabel>) -> Option<NodeAction<TLabel>> {
-        let incoming = self.incoming_edges(node);
+    /// finding out applicable action for given supernode
+    fn node_action(
+        &self,
+        node: &SNode<TLabel>,
+        cfg_in_edges: &HashMap<SLabel<TLabel>, HashSet<SLabel<TLabel>>>,
+    ) -> Option<NodeAction<TLabel>> {
+        let mut incoming: BTreeSet<&SNode<TLabel>> = cfg_in_edges
+            .get(&node.head)
+            .into_iter()
+            .flatten()
+            .map(|l| self.label_location.get(l).unwrap())
+            .map(|snode_label| self.nodes.get(snode_label).unwrap())
+            .collect();
+        // if given node have internal edges ending in its head, it will be seen as incoming supernode, which isn't useful
+        incoming.remove(node);
+
         // TODO hate there is no pattern-match adapters for simple collections, or is there?
         match incoming.len() {
             0 => None,
@@ -258,6 +155,7 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
         }
     }
 
+    /// merging `from_label` into `to_label`, entirely removing `from` supernode from the supergraph
     fn merge(&mut self, from_label: SLabel<TLabel>, to_label: SLabel<TLabel>) {
         let from = self.nodes.remove(&from_label).unwrap();
         let to = self.nodes.get_mut(&to_label).unwrap();
@@ -267,58 +165,54 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
         }
     }
 
+    /// splitting given supernode for each of `split` nodes
+    /// duplicates every node residing that supernode
     fn split(&mut self, node_label: SLabel<TLabel>, split: &SplitInto<TLabel>) {
-        let split_snode = self.nodes.remove(&node_label).unwrap();
+        let split_snode = self.nodes.get(&node_label).unwrap().to_owned();
 
-        let internal_edges = self.edges_between(&split_snode, &split_snode);
-        let outgoing_edges: Vec<_> = split_snode
+        let outgoing_edges: HashMap<_, _> = split_snode
             .contained
             .iter()
-            .flat_map(|inner| {
-                self.out_edges
-                    .get(inner)
-                    .into_iter()
-                    .flatten()
-                    .filter(|&to| {
-                        self.label_location.get(to).unwrap().to_owned().to_owned() != node_label
-                    })
-                    .map(|&to| (*inner, to))
-                    .collect::<Vec<_>>()
-            })
+            .copied()
+            .map(|inner| (inner, *self.cfg.edge(&inner)))
             .collect();
 
-        //duplicate every label in that supernode
-        for split_for_l in split {
+        //duplicate every label in that supernode (for each split except the first one, bc original version can be reused)
+        for split_for_l in &split[1..] {
             let split_for = self.nodes.get(split_for_l).unwrap();
             let mut versions_mapping: HashMap<SLabel<TLabel>, SLabel<TLabel>> = Default::default();
             for &inner in split_snode.contained.iter() {
-                self.labels.entry(inner.origin).and_modify(|versions| {
-                    let new_ver = SLabel::new(inner.origin, versions.len());
-                    assert!(versions_mapping.insert(inner, new_ver).is_none());
-                    versions.push(new_ver)
+                self.versions.entry(inner.origin).and_modify(|version| {
+                    *version += 1;
+                    let a = *version;
+                    let new_ver = SLabel::new(inner.origin, a);
+                    versions_mapping.insert(inner, new_ver);
                 });
             }
 
-            // split incoming edges
-            for (s_from, i_to) in self.edges_between(split_for, &split_snode) {
-                let n_to = versions_mapping.get(&i_to).unwrap().to_owned();
-                self.remove_edge(s_from, i_to);
-                self.add_edge(s_from, n_to);
+            // copy internal & outgoing edges
+            for (o_from, &edge) in outgoing_edges.iter() {
+                let curr_from = versions_mapping[o_from];
+                // in case of internal edge, we should redirect that edge to new copy of internal node
+                let maybe_redirected_edge =
+                    edge.redirect(|l| *versions_mapping.get(&l).unwrap_or(&l));
+                self.cfg.add_edge(curr_from, maybe_redirected_edge);
             }
 
-            // copy internal edges
-            for (i_from, i_to) in internal_edges.iter() {
-                let new_from = versions_mapping.get(i_from).unwrap().to_owned();
-                let new_to = versions_mapping.get(i_to).unwrap().to_owned();
-                self.add_edge(new_from, new_to);
+            let from_split: HashMap<_, _> = split_for
+                .contained
+                .iter()
+                .map(|&l| (l, *self.cfg.edge(&l)))
+                .filter(|(_l, e)| e.to_vec().into_iter().any(|&to| to == split_snode.head))
+                .collect();
+
+            for (f, e) in from_split {
+                let redirected = e.redirect(|to| *versions_mapping.get(&to).unwrap_or(&to));
+                self.cfg.remove_edge(f, e);
+                self.cfg.add_edge(f, redirected);
             }
 
-            // copy outgoing edges
-            for &(i_from, o_to) in outgoing_edges.iter() {
-                let new_from = versions_mapping.get(&i_from).unwrap().to_owned();
-                self.add_edge(new_from, o_to);
-            }
-
+            // populate supernode graph with new node's new version (for each split)
             let splitted_head = versions_mapping.get(&split_snode.head).unwrap().to_owned();
             let contained: Vec<_> = versions_mapping.values().copied().collect();
             self.nodes.insert(
@@ -333,25 +227,24 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
                 self.label_location.insert(c, node_ref.head);
             }
         }
-
-        for (i_from, i_to) in internal_edges {
-            self.remove_node(i_from);
-            self.remove_node(i_to);
-        }
-        for (i_from, o_to) in outgoing_edges {
-            self.remove_node(i_from);
-        }
     }
 
+    /// iterates over supergraph (using `snode_order` on each iteration) until there is only one node left
+    /// on each iteration we either:
+    /// * remove one supernode (by merging it into another one)
+    /// * or duplicate one (by splitting, one dup for each "parent")
+    /// in the end, there is only one supernode, which contains all the nodes and whose head is "entry" node
     pub fn reduce(&mut self) {
+        let mut in_edges: Option<HashMap<SLabel<TLabel>, HashSet<SLabel<TLabel>>>> = None;
         'outer: loop {
             let order: Vec<SLabel<TLabel>> = self.snode_order();
 
             let mut splits: Vec<(SLabel<TLabel>, SplitInto<TLabel>)> = Vec::new();
-            // TODO switch to maps and flattens to get rid of `Option`?
+
             for snode_label in order {
                 let n = self.nodes.get(&snode_label).unwrap();
-                match self.node_action(&n) {
+                let in_edges = in_edges.get_or_insert_with(|| self.cfg.in_edges());
+                match self.node_action(n, in_edges) {
                     None => {}
                     Some(SplitFor(split)) => splits.push((n.head, split)),
                     Some(MergeInto(to)) => {
@@ -365,13 +258,16 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
                 BTreeMap::new();
 
             for n_split in splits {
-                split_len.entry(n_split.1.len()).or_default().push(n_split);
+                let (_, split_for) = &n_split;
+                split_len.entry(split_for.len()).or_default().push(n_split);
             }
 
             if let Some((_, biggest_splits)) = split_len.last_key_value() {
-                let (n, split) = biggest_splits.first().unwrap(); // TODO select by internal node count?
+                // let split_internal_nodes = biggest_splits.iter().map(|(n, split_for)|); // TODO select by internal node count?
+                let (n, split) = biggest_splits.first().unwrap();
 
                 self.split(*n, split);
+                in_edges = None;
 
                 continue;
             } else {
@@ -382,43 +278,60 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
     }
 }
 
-pub fn reduce<TLabel: CfgLabel>(cfg: &Cfg<TLabel>) -> Cfg<SLabel<TLabel>> {
+pub fn reduce<TLabel: CfgLabel + Debug>(cfg: &Cfg<TLabel>) -> Cfg<SLabel<TLabel>> {
     let mut super_graph = SuperGraph::new(cfg);
     super_graph.reduce();
-    let super_out_edges = super_graph.out_edges;
-    let out_edges: Vec<(SLabel<TLabel>, CfgEdge<SLabel<TLabel>>)> = super_out_edges
-        .into_iter()
-        .filter_map(|(slabel, points_to)| {
-            let edge_opt = match cfg.out_edges.get(&slabel.origin).unwrap().to_owned() {
-                Uncond(label) => {
-                    assert_eq!(points_to.len(), 1);
-                    let to = points_to.into_iter().next().unwrap();
-                    assert_eq!(to.origin, label);
-                    Some(Uncond(to))
-                }
-                Cond(t_l, f_l) => {
-                    assert_eq!(points_to.len(), 2);
-                    let (first, second) = {
-                        let mut iter = points_to.into_iter();
-                        (iter.next().unwrap(), iter.next().unwrap())
-                    };
+    super_graph.cfg
+}
 
-                    if (t_l, f_l) == (first.origin, second.origin) {
-                        Some(Cond(first, second))
-                    } else if (t_l, f_l) == (second.origin, first.origin) {
-                        Some(Cond(second, first))
-                    } else {
-                        panic!("wtf") //todo
-                    }
-                }
-                Terminal => {
-                    assert_eq!(points_to.len(), 0);
-                    None
-                }
-            };
-            edge_opt.map(|edge| (slabel, edge))
+#[cfg(test)]
+mod test {
+    use crate::graph::cfg::CfgEdge::{Cond, Uncond};
+    use crate::graph::cfg::{Cfg, CfgLabel};
+    use crate::graph::supergraph::{reduce, SLabel};
+    use std::collections::{HashMap, HashSet};
+
+    fn test_reduce<TLabel: CfgLabel>(
+        origin_cfg: Cfg<TLabel>,
+        reduced_cfg: Cfg<SLabel<TLabel>>,
+    ) -> bool {
+        let reduced_nodes = reduced_cfg.nodes();
+        let mut origin_mapping: HashMap<TLabel, HashSet<SLabel<TLabel>>> = Default::default();
+        for &x in reduced_nodes.iter() {
+            origin_mapping.entry(x.origin).or_default().insert(*x);
+        }
+
+        origin_cfg.out_edges.iter().all(|(from, &e)| {
+            origin_mapping
+                .get(from)
+                .unwrap()
+                .iter()
+                .all(|&r_from| reduced_cfg.edge(&r_from).map(|x| x.origin) == e)
         })
-        .collect();
+    }
 
-    Cfg::from_edges(out_edges, super_graph.entry).unwrap()
+    #[test]
+    fn simplest() {
+        let cfg = Cfg::from_vec(0, &[(0, Cond(1, 2)), (1, Uncond(2)), (2, Cond(3, 1))]).unwrap();
+        let reduced = reduce(&cfg);
+
+        assert!(test_reduce(cfg, reduced));
+    }
+
+    #[test]
+    fn irreducible() {
+        let cfg = Cfg::from_vec(
+            0,
+            &[
+                (0, Cond(1, 2)),
+                (1, Uncond(4)),
+                (4, Uncond(2)),
+                (2, Cond(3, 1)),
+            ],
+        )
+        .unwrap();
+        let reduced = reduce(&cfg);
+
+        assert!(test_reduce(cfg, reduced));
+    }
 }

@@ -1,8 +1,9 @@
 use crate::graph::cfg::{Cfg, CfgEdge, CfgLabel};
 use crate::graph::relooper::{ReBlock, ReSeq};
 use crate::graph::EnrichedCfg;
+use std::fmt::Display;
 
-impl<TLabel: CfgLabel> Cfg<TLabel> {
+impl<TLabel: CfgLabel + Display> Cfg<TLabel> {
     pub fn cfg_to_dot(&self, name: &str) -> String {
         let mut lines: Vec<String> = Vec::new();
         lines.push(format!("subgraph cluster_{name} {{ label=\"{name}\";"));
@@ -10,9 +11,9 @@ impl<TLabel: CfgLabel> Cfg<TLabel> {
         lines.push(format!("{name}_nend[label=\"end\"]"));
 
         let mut edges: Vec<String> = Vec::new();
-        for n in self.nodes() {
+        for &n in self.nodes() {
             lines.push(format!("{name}_n{n}[label=\"{n}\"];"));
-            match self.edge(n) {
+            match self.edge(&n) {
                 CfgEdge::Uncond(u) => {
                     edges.push(format!("{name}_n{n} -> {name}_n{u};"));
                 }
@@ -33,16 +34,16 @@ impl<TLabel: CfgLabel> Cfg<TLabel> {
     }
 }
 
-impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
-    fn labels(&self, n: TLabel) -> String {
+impl<TLabel: CfgLabel + Display> EnrichedCfg<TLabel> {
+    fn labels(&self, n: &TLabel) -> String {
         let mut res = "".to_string();
-        if self.loop_nodes.contains(&n) {
+        if self.loop_nodes.contains(n) {
             res += "l";
         }
-        if self.if_nodes.contains(&n) {
+        if self.if_nodes.contains(n) {
             res += "i";
         }
-        if self.merge_nodes.contains(&n) {
+        if self.merge_nodes.contains(n) {
             res += "m";
         }
 
@@ -56,9 +57,9 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
         lines.push(format!("{name}_nend[label=\"end\"]"));
 
         let mut edges: Vec<String> = Vec::new();
-        for n in self.cfg.nodes() {
-            lines.push(format!("{name}_n{n}[label=\"{n} {}\"];", self.labels(n)));
-            match self.cfg.edge(n) {
+        for &n in self.cfg.nodes() {
+            lines.push(format!("{name}_n{n}[label=\"{n} {}\"];", self.labels(&n)));
+            match self.cfg.edge(&n) {
                 CfgEdge::Uncond(u) => {
                     edges.push(format!("{name}_n{n} -> {name}_n{u};"));
                 }
@@ -94,7 +95,7 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
     }
 }
 
-impl<TLabel: CfgLabel> ReSeq<TLabel> {
+impl<TLabel: CfgLabel + Display> ReSeq<TLabel> {
     fn to_dot_inner(&self, current_id: usize, back_branches: &Vec<usize>) -> (usize, Vec<String>) {
         let mut res: Vec<String> = Vec::new();
 

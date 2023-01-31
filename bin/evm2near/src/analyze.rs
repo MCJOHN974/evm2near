@@ -6,10 +6,7 @@ use relooper::graph::{
     cfg::{Cfg, CfgEdge},
     relooper::ReSeq,
 };
-use std::{
-    collections::{HashMap},
-    ops::Range,
-};
+use std::{collections::HashMap, ops::Range};
 
 use relooper::graph::caterpillar::CaterpillarLabel;
 use relooper::graph::relooper::reloop;
@@ -63,74 +60,75 @@ pub fn analyze_cfg(program: &Program) -> ReSeq<SLabel<CaterpillarLabel<EvmLabel>
     let mut node_info: HashMap<usize, (bool, bool)> = Default::default(); // label => (is_jumpdest, is_dynamic);
     let mut code_ranges: HashMap<usize, Range<usize>> = Default::default();
 
-    let (last_offs, bs, _) = program.0.iter().enumerate().fold(
-        (0_usize, None, None),
-        |(curr_offs, block_start, prev_op): (usize, Option<BlockStart>, Option<&Opcode>),
-         (curr_idx, op)| {
-            let next_idx = curr_idx + 1;
-            let next_offs = curr_offs + op.size();
+    let mut curr_offs = 0_usize;
+    let mut block_start: Option<BlockStart> = None;
+    let mut prev_op: Option<&Opcode> = None;
 
-            use Opcode::*;
-            let bs = match op {
-                JUMP | JUMPI => {
-                    let BlockStart(start_offs, start_idx, is_jmpdest) =
-                        block_start.expect("block should be present at any jump opcode");
+    for (curr_idx, op) in program.0.iter().enumerate() {
+        let next_idx = curr_idx + 1;
+        let next_offs = curr_offs + op.size();
 
-                    let label = match prev_op {
-                        Some(PUSH1(addr)) => Some(usize::from(*addr)),
-                        Some(PUSHn(_, addr, _)) => Some(addr.as_usize()),
-                        Some(_) => None,
-                        None => unreachable!(),
-                    };
-                    let is_dyn = match label {
-                        Some(l) => {
-                            let edge = if op == &JUMP {
-                                CfgEdge::Uncond(l)
-                            } else {
-                                CfgEdge::Cond(l, next_offs)
-                            };
-                            cfg.add_edge(start_offs, edge);
-                            false
-                        }
-                        None => true,
-                    };
-                    node_info.insert(start_offs, (is_jmpdest, is_dyn));
-                    code_ranges.insert(start_offs, start_idx..next_idx);
+        use Opcode::*;
+        block_start = match op {
+            JUMP | JUMPI => {
+                let BlockStart(start_offs, start_idx, is_jmpdest) =
+                    block_start.expect("block should be present at any jump opcode");
 
-                    None
-                }
-                JUMPDEST => {
-                    if let Some(BlockStart(start_offs, start_idx, is_jmpdest)) = block_start {
-                        let edge = CfgEdge::Uncond(curr_offs);
+                let label = match prev_op {
+                    Some(PUSH1(addr)) => Some(usize::from(*addr)),
+                    Some(PUSHn(_, addr, _)) => Some(addr.as_usize()),
+                    Some(_) => None,
+                    None => unreachable!(),
+                };
+                let is_dyn = match label {
+                    Some(l) => {
+                        let edge = if op == &JUMP {
+                            CfgEdge::Uncond(l)
+                        } else {
+                            CfgEdge::Cond(l, next_offs)
+                        };
                         cfg.add_edge(start_offs, edge);
-                        node_info.insert(start_offs, (is_jmpdest, false));
-                        code_ranges.insert(start_offs, start_idx..curr_idx);
+                        false
                     }
+                    None => true,
+                };
+                node_info.insert(start_offs, (is_jmpdest, is_dyn));
+                code_ranges.insert(start_offs, start_idx..next_idx);
 
-                    Some(BlockStart(curr_offs, curr_idx, true))
+                None
+            }
+            JUMPDEST => {
+                if let Some(BlockStart(start_offs, start_idx, is_jmpdest)) = block_start {
+                    let edge = CfgEdge::Uncond(curr_offs);
+                    cfg.add_edge(start_offs, edge);
+                    node_info.insert(start_offs, (is_jmpdest, false));
+                    code_ranges.insert(start_offs, start_idx..curr_idx);
                 }
-                _ => {
-                    let bs @ BlockStart(start_offs, start_idx, is_jmpdest) =
-                        block_start.unwrap_or(BlockStart(curr_offs, curr_idx, false));
 
-                    if op.is_halt() {
-                        cfg.add_edge(bs.0, CfgEdge::Terminal);
-                        node_info.insert(start_offs, (is_jmpdest, false));
-                        code_ranges.insert(start_offs, start_idx..next_idx);
-                        None
-                    } else {
-                        Some(bs)
-                    }
+                Some(BlockStart(curr_offs, curr_idx, true))
+            }
+            _ => {
+                let bs @ BlockStart(start_offs, start_idx, is_jmpdest) =
+                    block_start.unwrap_or(BlockStart(curr_offs, curr_idx, false));
+
+                if op.is_halt() {
+                    cfg.add_edge(bs.0, CfgEdge::Terminal);
+                    node_info.insert(start_offs, (is_jmpdest, false));
+                    code_ranges.insert(start_offs, start_idx..next_idx);
+                    None
+                } else {
+                    Some(bs)
                 }
-            };
+            }
+        };
 
-            (next_offs, bs, Some(op))
-        },
-    );
+        curr_offs = next_offs;
+        prev_op = Some(op);
+    }
 
-    if let Some(BlockStart(start_offs, start_idx, is_jmpdest)) = bs {
+    if let Some(BlockStart(start_offs, start_idx, is_jmpdest)) = block_start {
         node_info.insert(start_offs, (is_jmpdest, false));
-        code_ranges.insert(start_offs, start_idx..last_offs);
+        code_ranges.insert(start_offs, start_idx..curr_offs);
     }
 
     let opcodes: Vec<String> = program

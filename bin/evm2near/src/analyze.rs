@@ -67,11 +67,13 @@ pub fn analyze_cfg(program: &Program) -> ReSeq<SLabel<CaterpillarLabel<EvmLabel>
     for (curr_idx, op) in program.0.iter().enumerate() {
         let next_idx = curr_idx + 1;
         let next_offs = curr_offs + op.size();
+
         use Opcode::*;
         block_start = match op {
             JUMP | JUMPI => {
                 let BlockStart(start_offs, start_idx, is_jmpdest) =
                     block_start.expect("block should be present at any jump opcode");
+
                 let label = match prev_op {
                     Some(PUSH1(addr)) => Some(usize::from(*addr)),
                     Some(PUSHn(_, addr, _)) => Some(addr.as_usize()),
@@ -92,6 +94,7 @@ pub fn analyze_cfg(program: &Program) -> ReSeq<SLabel<CaterpillarLabel<EvmLabel>
                 };
                 node_info.insert(start_offs, (is_jmpdest, is_dyn));
                 code_ranges.insert(start_offs, start_idx..next_idx);
+
                 None
             }
             JUMPDEST => {
@@ -101,11 +104,13 @@ pub fn analyze_cfg(program: &Program) -> ReSeq<SLabel<CaterpillarLabel<EvmLabel>
                     node_info.insert(start_offs, (is_jmpdest, false));
                     code_ranges.insert(start_offs, start_idx..curr_idx);
                 }
+
                 Some(BlockStart(curr_offs, curr_idx, true))
             }
             _ => {
                 let bs @ BlockStart(start_offs, start_idx, is_jmpdest) =
                     block_start.unwrap_or(BlockStart(curr_offs, curr_idx, false));
+
                 if op.is_halt() {
                     cfg.add_edge(bs.0, CfgEdge::Terminal);
                     node_info.insert(start_offs, (is_jmpdest, false));
@@ -116,20 +121,22 @@ pub fn analyze_cfg(program: &Program) -> ReSeq<SLabel<CaterpillarLabel<EvmLabel>
                 }
             }
         };
+
         curr_offs = next_offs;
         prev_op = Some(op);
     }
+
     if let Some(BlockStart(start_offs, start_idx, is_jmpdest)) = block_start {
         node_info.insert(start_offs, (is_jmpdest, false));
         code_ranges.insert(start_offs, start_idx..curr_offs);
     }
-    
+
     let opcodes: Vec<String> = program
         .clone()
         .0
         .into_iter()
         .enumerate()
-        .map(|(idx, opcode)| format!("\t\t\t{}\t{}", idx, opcode).to_string())
+        .map(|(idx, opcode)| format!("\t{}\t{}", idx, opcode))
         .collect();
     std::fs::write("opcodes.evm", opcodes.join("\n")).expect("fs error");
 

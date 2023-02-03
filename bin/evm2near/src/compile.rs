@@ -289,6 +289,32 @@ impl Compiler {
         self.unfold_cfg(input_program, input_cfg, &mut wasm);
         wasm.push(Instruction::End);
 
+        // debug
+        let mut shift = String::default();
+        std::fs::write(
+            "compiled.wat",
+            wasm.clone()
+                .into_iter()
+                .map(|instr| {
+                    if instr == Instruction::Else || instr == Instruction::End {
+                        for _ in 0..4 {
+                            shift.pop();
+                        }
+                    }
+                    let res = format!("{}{}", shift, instr).to_string();
+                    match instr {
+                        Instruction::Block(_) | Instruction::Else | Instruction::If(_) | Instruction::Loop(_) => {
+                            shift.push_str("    ");
+                        }
+                        _ => {}
+                    }
+                    res
+                })
+                .collect::<Vec<String>>()
+                .join("\n"),
+        )
+        .expect("fs error");
+
         let func_id = self.emit_function(Some("_evm_exec".to_string()), wasm);
         self.evm_exec_function = func_id;
     }

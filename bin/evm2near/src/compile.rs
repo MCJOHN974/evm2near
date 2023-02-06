@@ -28,12 +28,12 @@ pub fn compile(
     runtime_library: Module,
     config: CompilerConfig,
 ) -> Module {
-    let relooped_cfg: ReSeq<SLabel<CaterpillarLabel<EvmLabel>>> = analyze_cfg(input_program);
+    let (relooped_cfg, id2offs) = analyze_cfg(input_program);
 
     let mut compiler = Compiler::new(runtime_library, config);
     compiler.emit_wasm_start();
     compiler.emit_evm_start();
-    compiler.compile_cfg(&relooped_cfg, input_program);
+    compiler.compile_cfg(&relooped_cfg, input_program, id2offs);
     compiler.emit_abi_execute();
     let abi_data = compiler.emit_abi_methods(input_abi).unwrap();
 
@@ -219,55 +219,55 @@ impl Compiler {
         &self,
         program: &Program,
         cfg_part: &ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
-        res: &mut Vec<Instruction>,
+        res: &mut Vec<(Instruction, usize)>,
     ) {
         for block in cfg_part.0.iter() {
             match block {
                 ReBlock::Block(inner_seq) => {
-                    res.push(Instruction::Block(BlockType::NoResult)); //TODO block type?
+                    res.push((Instruction::Block(BlockType::NoResult), usize::MAX)); //TODO block type?
                     self.unfold_cfg(program, inner_seq, res);
-                    res.push(Instruction::End);
+                    res.push((Instruction::End, usize::MAX));
                 }
                 ReBlock::Loop(inner_seq) => {
-                    res.push(Instruction::Loop(BlockType::NoResult)); //TODO block type?
+                    res.push((Instruction::Loop(BlockType::NoResult), usize::MAX)); //TODO block type?
                     self.unfold_cfg(program, inner_seq, res);
-                    res.push(Instruction::End);
+                    res.push((Instruction::End, usize::MAX));
                 }
                 ReBlock::If(true_branch, false_branch) => {
-                    res.push(Instruction::Call(self.evm_pop_function));
-                    res.push(Instruction::I32Eq);
-                    res.push(Instruction::If(BlockType::NoResult)); //TODO block type?
+                    res.push((Instruction::Call(self.evm_pop_function), usize::MAX));
+                    res.push((Instruction::I32Eq, usize::MAX));
+                    res.push((Instruction::If(BlockType::NoResult), usize::MAX)); //TODO block type?
                     self.unfold_cfg(program, true_branch, res);
-                    res.push(Instruction::Else);
+                    res.push((Instruction::Else, usize::MAX));
                     self.unfold_cfg(program, false_branch, res);
-                    res.push(Instruction::End);
+                    res.push((Instruction::End, usize::MAX));
                 }
                 ReBlock::Br(levels) => {
-                    res.push(Instruction::Br((*levels).try_into().unwrap()));
+                    res.push((Instruction::Br((*levels).try_into().unwrap()), usize::MAX));
                 }
                 ReBlock::Return => {
-                    res.push(Instruction::Return);
+                    res.push((Instruction::Return, usize::MAX));
                 }
                 ReBlock::Actions(block) => {
                     match block.origin {
                         CaterpillarLabel::Original(orig_label) => {
                             let code = &program.0[orig_label.code_start..orig_label.code_end];
-                            for op in code {
-                                let operands = encode_operands(op);
+                            for (idx, op) in code.into_iter().enumerate() {
+                                let operands = encode_operands(op).into_iter().map(|op| (op, usize::MAX)).collect::<Vec<_>>();
                                 res.extend(operands);
                                 let call = self.compile_operator(op);
-                                res.push(call);
+                                res.push((call, idx + orig_label.code_start));
                                 if op == &Opcode::RETURN {
                                     //TODO idk
-                                    res.push(Instruction::Return);
+                                    res.push((Instruction::Return, usize::MAX));
                                 }
                             }
                         }
                         CaterpillarLabel::Generated(a) => {
                             res.extend(vec![
-                                Instruction::Call(self.evm_pop_function),
-                                Instruction::I32Const(a.label.try_into().unwrap()),
-                                Instruction::I32Eq,
+                                (Instruction::Call(self.evm_pop_function), usize::MAX),
+                                (Instruction::I32Const(a.label.try_into().unwrap()), usize::MAX),
+                                (Instruction::I32Eq, usize::MAX),
                             ]);
                         }
                     }
@@ -281,14 +281,16 @@ impl Compiler {
         self: &mut Compiler,
         input_cfg: &ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
         input_program: &Program,
+        mut id2offs: HashMap<usize, usize>,
     ) {
         assert_ne!(self.evm_start_function, 0); // filled in during emit_start()
         assert_eq!(self.evm_exec_function, 0); // filled in below
 
-        let mut wasm: Vec<Instruction> = Default::default();
+        let mut wasm: Vec<(Instruction, usize)> = Default::default();
         self.unfold_cfg(input_program, input_cfg, &mut wasm);
-        wasm.push(Instruction::End);
+        wasm.push((Instruction::End, usize::MAX));
 
+        id2offs.insert(usize::MAX, usize::MAX);
         // debug
         let mut shift = String::default();
         std::fs::write(
@@ -296,15 +298,16 @@ impl Compiler {
             wasm.clone()
                 .into_iter()
                 .map(|instr| {
-                    if instr == Instruction::Else || instr == Instruction::End {
-                        for _ in 0..4 {
+                    if instr.0 == Instruction::Else || instr.0 == Instruction::End {
+                        for _ in 0..2 {
                             shift.pop();
                         }
                     }
-                    let res = format!("{}{}", shift, instr).to_string();
-                    match instr {
+                    println!("{}", instr.1);
+                    let res = format!("{}{} \t\t\t\t0x{:02x}", shift, instr.0, id2offs.get(&instr.1).unwrap()).to_string();
+                    match instr.0 {
                         Instruction::Block(_) | Instruction::Else | Instruction::If(_) | Instruction::Loop(_) => {
-                            shift.push_str("    ");
+                            shift.push_str("  ");
                         }
                         _ => {}
                     }
@@ -315,7 +318,8 @@ impl Compiler {
         )
         .expect("fs error");
 
-        let func_id = self.emit_function(Some("_evm_exec".to_string()), wasm);
+        let wasm2 = wasm.into_iter().map(|(op, _idx)|op).collect::<Vec<_>>();
+        let func_id = self.emit_function(Some("_evm_exec".to_string()), wasm2);
         self.evm_exec_function = func_id;
     }
 

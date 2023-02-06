@@ -12,6 +12,7 @@ use parity_wasm::{
 };
 use relooper::graph::relooper::ReBlock;
 use relooper::graph::{caterpillar::CaterpillarLabel, relooper::ReSeq, supergraph::SLabel};
+use serde::__private::de;
 
 use crate::{
     abi::Functions,
@@ -219,61 +220,65 @@ impl Compiler {
         &self,
         program: &Program,
         cfg_part: &ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
-        res: &mut Vec<(Instruction, usize)>,
-    ) {
+        res: &mut Vec<Instruction>,
+    ) -> HashMap<usize, usize> {
+        // wasm line idx to evm line idx of image
+        let mut debug_info: HashMap<usize, usize> = Default::default();
         for block in cfg_part.0.iter() {
             match block {
                 ReBlock::Block(inner_seq) => {
-                    res.push((Instruction::Block(BlockType::NoResult), usize::MAX)); //TODO block type?
-                    self.unfold_cfg(program, inner_seq, res);
-                    res.push((Instruction::End, usize::MAX));
+                    res.push(Instruction::Block(BlockType::NoResult)); //TODO block type?
+                    debug_info.extend(self.unfold_cfg(program, inner_seq, res).into_iter());
+                    res.push(Instruction::End);
                 }
                 ReBlock::Loop(inner_seq) => {
-                    res.push((Instruction::Loop(BlockType::NoResult), usize::MAX)); //TODO block type?
-                    self.unfold_cfg(program, inner_seq, res);
-                    res.push((Instruction::End, usize::MAX));
+                    res.push(Instruction::Loop(BlockType::NoResult)); //TODO block type?
+                    debug_info.extend(self.unfold_cfg(program, inner_seq, res).into_iter());
+                    res.push(Instruction::End);
                 }
                 ReBlock::If(true_branch, false_branch) => {
-                    res.push((Instruction::Call(self.evm_pop_function), usize::MAX));
-                    res.push((Instruction::I32Eq, usize::MAX));
-                    res.push((Instruction::If(BlockType::NoResult), usize::MAX)); //TODO block type?
-                    self.unfold_cfg(program, true_branch, res);
-                    res.push((Instruction::Else, usize::MAX));
-                    self.unfold_cfg(program, false_branch, res);
-                    res.push((Instruction::End, usize::MAX));
+                    res.push(Instruction::Call(self.evm_pop_function));
+                    res.push(Instruction::I32Eq);
+                    res.push(Instruction::If(BlockType::NoResult)); //TODO block type?
+                    debug_info.extend(self.unfold_cfg(program, true_branch, res).into_iter());
+                    res.push(Instruction::Else);
+                    debug_info.extend(self.unfold_cfg(program, false_branch, res).into_iter());
+                    res.push(Instruction::End);
                 }
                 ReBlock::Br(levels) => {
-                    res.push((Instruction::Br((*levels).try_into().unwrap()), usize::MAX));
+                    res.push(Instruction::Br((*levels).try_into().unwrap()));
                 }
                 ReBlock::Return => {
-                    res.push((Instruction::Return, usize::MAX));
+                    res.push(Instruction::Return);
                 }
                 ReBlock::Actions(block) => {
                     match block.origin {
                         CaterpillarLabel::Original(orig_label) => {
                             let code = &program.0[orig_label.code_start..orig_label.code_end];
                             for (idx, op) in code.into_iter().enumerate() {
-                                let operands = encode_operands(op).into_iter().map(|op| (op, usize::MAX)).collect::<Vec<_>>();
+                                let operands = encode_operands(op);
                                 res.extend(operands);
                                 let call = self.compile_operator(op);
-                                res.push((call, idx + orig_label.code_start));
+                                res.push(call);
+                                debug_info.insert(res.len() - 1, idx + orig_label.code_start);
                                 if op == &Opcode::RETURN {
                                     //TODO idk
-                                    res.push((Instruction::Return, usize::MAX));
+                                    res.push(Instruction::Return);
                                 }
                             }
                         }
                         CaterpillarLabel::Generated(a) => {
                             res.extend(vec![
-                                (Instruction::Call(self.evm_pop_function), usize::MAX),
-                                (Instruction::I32Const(a.label.try_into().unwrap()), usize::MAX),
-                                (Instruction::I32Eq, usize::MAX),
+                                Instruction::Call(self.evm_pop_function),
+                                Instruction::I32Const(a.label.try_into().unwrap()),
+                                Instruction::I32Eq,
                             ]);
                         }
                     }
                 }
             }
         }
+        debug_info
     }
 
     /// Compiles the program's control-flow graph.
@@ -286,27 +291,62 @@ impl Compiler {
         assert_ne!(self.evm_start_function, 0); // filled in during emit_start()
         assert_eq!(self.evm_exec_function, 0); // filled in below
 
-        let mut wasm: Vec<(Instruction, usize)> = Default::default();
-        self.unfold_cfg(input_program, input_cfg, &mut wasm);
-        wasm.push((Instruction::End, usize::MAX));
+        let mut wasm: Vec<Instruction> = Default::default();
+        let debug_info = self.unfold_cfg(input_program, input_cfg, &mut wasm);
+        wasm.push(Instruction::End);
 
         id2offs.insert(usize::MAX, usize::MAX);
         // debug
+
+        for (wasmid, evmid) in &debug_info {
+            println!("wasmid {} => evmid {}", wasmid, evmid);
+        }
+
+        let wasmline2offs = |line: usize| {
+            println!("{}", line);
+            let evm_idx: usize;
+            match debug_info.get(&line) {
+                Some(idx) => {evm_idx = *idx;}
+                None => return None
+            }
+            id2offs.get(&evm_idx)
+        };
+
         let mut shift = String::default();
         std::fs::write(
             "compiled.wat",
             wasm.clone()
                 .into_iter()
-                .map(|instr| {
-                    if instr.0 == Instruction::Else || instr.0 == Instruction::End {
+                .enumerate()
+                .map(|(idx, instr)| {
+                    if instr == Instruction::Else || instr == Instruction::End {
                         for _ in 0..2 {
                             shift.pop();
                         }
                     }
-                    println!("{}", instr.1);
-                    let res = format!("{}{} \t\t\t\t0x{:02x}", shift, instr.0, id2offs.get(&instr.1).unwrap()).to_string();
-                    match instr.0 {
-                        Instruction::Block(_) | Instruction::Else | Instruction::If(_) | Instruction::Loop(_) => {
+                    let res: String;
+                    match wasmline2offs(idx) {
+                        Some(offs) => {
+                            res = format!(
+                                "{}{} \t\t\t\t0x{:02x}",
+                                shift,
+                                instr,
+                                offs
+                            ).to_string();
+                        }
+                        None => {
+                            res = format!(
+                                "{}{}",
+                                shift,
+                                instr,
+                            ).to_string();
+                        }
+                    }
+                    match instr {
+                        Instruction::Block(_)
+                        | Instruction::Else
+                        | Instruction::If(_)
+                        | Instruction::Loop(_) => {
                             shift.push_str("  ");
                         }
                         _ => {}
@@ -318,8 +358,8 @@ impl Compiler {
         )
         .expect("fs error");
 
-        let wasm2 = wasm.into_iter().map(|(op, _idx)|op).collect::<Vec<_>>();
-        let func_id = self.emit_function(Some("_evm_exec".to_string()), wasm2);
+        
+        let func_id = self.emit_function(Some("_evm_exec".to_string()), wasm);
         self.evm_exec_function = func_id;
     }
 

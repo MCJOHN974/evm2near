@@ -49,13 +49,20 @@ fn relooped_cfg(cfg: Cfg<EvmCfgLabel<EvmLabel>>) -> ReSeq<SLabel<CaterpillarLabe
     )
     .expect("fs error");
     let reduced = reduce(&undyned);
-    reloop(&reduced)
+    let res = reloop(&reduced);
+    std::fs::write("cater.dot", format!("digraph {{{}}}", res.to_dot())).expect("fs error");
+    res
 }
 
 #[derive(Debug)]
 struct BlockStart(usize, usize, bool);
 
-pub fn analyze_cfg(program: &Program) -> (ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>, HashMap<usize, usize>) {
+pub fn analyze_cfg(
+    program: &Program,
+) -> (
+    ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
+    HashMap<usize, usize>,
+) {
     let mut cfg = Cfg::from_edges(0, &Default::default()).unwrap();
     let mut node_info: HashMap<usize, (bool, bool)> = Default::default(); // label => (is_jumpdest, is_dynamic);
     let mut code_ranges: HashMap<usize, Range<usize>> = Default::default();
@@ -140,9 +147,6 @@ pub fn analyze_cfg(program: &Program) -> (ReSeq<SLabel<CaterpillarLabel<EvmLabel
         cnt += 1;
         offs + opcode.size()
     });
-
-
-
 
     std::fs::write("opcodes.evm", opcode_lines.join("\n")).expect("fs error");
 

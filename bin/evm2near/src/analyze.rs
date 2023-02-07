@@ -57,11 +57,7 @@ fn relooped_cfg(cfg: Cfg<EvmCfgLabel<EvmLabel>>) -> ReSeq<SLabel<CaterpillarLabe
 #[derive(Debug)]
 struct BlockStart(usize, usize, bool);
 
-pub fn analyze_cfg(
-    program: &Program,
-) -> 
-    ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>
- {
+pub fn analyze_cfg(program: &Program) -> ReSeq<SLabel<CaterpillarLabel<EvmLabel>>> {
     let mut cfg = Cfg::from_edges(0, &Default::default()).unwrap();
     let mut node_info: HashMap<usize, (bool, bool)> = Default::default(); // label => (is_jumpdest, is_dynamic);
     let mut code_ranges: HashMap<usize, Range<usize>> = Default::default();

@@ -13,7 +13,6 @@ use parity_wasm::{
 use relooper::graph::relooper::ReBlock;
 use relooper::graph::{caterpillar::CaterpillarLabel, relooper::ReSeq, supergraph::SLabel};
 
-
 use crate::{
     abi::Functions,
     analyze::{analyze_cfg, EvmLabel},
@@ -23,27 +22,36 @@ use crate::{
 
 const TABLE_OFFSET: i32 = 0x1000;
 
+fn evm_idx_to_offs(program: &Program) -> HashMap<usize, usize> {
+    let mut opcode_lines: Vec<String> = vec![];
+    let mut idx2offs: HashMap<usize, usize> = Default::default();
+    program
+        .0
+        .iter()
+        .enumerate()
+        .fold(0_usize, |offs, (cnt, opcode)| {
+            opcode_lines.push(format!("0x{:02x}\t{}", offs, opcode));
+            idx2offs.insert(cnt, offs);
+            offs + opcode.size()
+        });
+    std::fs::write("opcodes.evm", opcode_lines.join("\n")).expect("fs error");
+    idx2offs
+}
+
 pub fn compile(
     input_program: &Program,
     input_abi: Option<Functions>,
     runtime_library: Module,
     config: CompilerConfig,
 ) -> Module {
-    let relooped_cfg= analyze_cfg(input_program);
+    let relooped_cfg = analyze_cfg(input_program);
 
-    let mut opcode_lines: Vec<String> = vec![];
-    let mut id2offs: HashMap<usize, usize> = Default::default();
-    input_program.0.iter().enumerate().fold(0_usize, |offs, (cnt, opcode)| {
-        opcode_lines.push(format!("0x{:02x}\t{}", offs, opcode));
-        id2offs.insert(cnt, offs);
-        offs + opcode.size()
-    });
-    std::fs::write("opcodes.evm", opcode_lines.join("\n")).expect("fs error");
+    let idx2offs = evm_idx_to_offs(input_program);
 
     let mut compiler = Compiler::new(runtime_library, config);
     compiler.emit_wasm_start();
     compiler.emit_evm_start();
-    compiler.compile_cfg(&relooped_cfg, input_program, id2offs);
+    compiler.compile_cfg(&relooped_cfg, input_program, idx2offs);
     compiler.emit_abi_execute();
     let abi_data = compiler.emit_abi_methods(input_abi).unwrap();
 
@@ -232,26 +240,26 @@ impl Compiler {
         res: &mut Vec<Instruction>,
     ) -> HashMap<usize, usize> {
         // wasm line idx to evm line idx of image
-        let mut debug_info: HashMap<usize, usize> = Default::default();
+        let mut wasm_idx2offs: HashMap<usize, usize> = Default::default();
         for block in cfg_part.0.iter() {
             match block {
                 ReBlock::Block(inner_seq) => {
                     res.push(Instruction::Block(BlockType::NoResult)); //TODO block type?
-                    debug_info.extend(self.unfold_cfg(program, inner_seq, res).into_iter());
+                    wasm_idx2offs.extend(self.unfold_cfg(program, inner_seq, res).into_iter());
                     res.push(Instruction::End);
                 }
                 ReBlock::Loop(inner_seq) => {
                     res.push(Instruction::Loop(BlockType::NoResult)); //TODO block type?
-                    debug_info.extend(self.unfold_cfg(program, inner_seq, res).into_iter());
+                    wasm_idx2offs.extend(self.unfold_cfg(program, inner_seq, res).into_iter());
                     res.push(Instruction::End);
                 }
                 ReBlock::If(true_branch, false_branch) => {
                     res.push(Instruction::Call(self.evm_pop_function));
                     res.push(Instruction::I32Eq);
                     res.push(Instruction::If(BlockType::NoResult)); //TODO block type?
-                    debug_info.extend(self.unfold_cfg(program, true_branch, res).into_iter());
+                    wasm_idx2offs.extend(self.unfold_cfg(program, true_branch, res).into_iter());
                     res.push(Instruction::Else);
-                    debug_info.extend(self.unfold_cfg(program, false_branch, res).into_iter());
+                    wasm_idx2offs.extend(self.unfold_cfg(program, false_branch, res).into_iter());
                     res.push(Instruction::End);
                 }
                 ReBlock::Br(levels) => {
@@ -269,7 +277,7 @@ impl Compiler {
                                 res.extend(operands);
                                 let call = self.compile_operator(op);
                                 res.push(call);
-                                debug_info.insert(res.len() - 1, idx + orig_label.code_start);
+                                wasm_idx2offs.insert(res.len() - 1, idx + orig_label.code_start);
                                 if op == &Opcode::RETURN {
                                     //TODO idk
                                     res.push(Instruction::Return);
@@ -287,25 +295,16 @@ impl Compiler {
                 }
             }
         }
-        debug_info
+        wasm_idx2offs
     }
 
-    /// Compiles the program's control-flow graph.
-    fn compile_cfg(
-        self: &mut Compiler,
-        input_cfg: &ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
-        input_program: &Program,
-        id2offs: HashMap<usize, usize>,
+    fn debug_only_exec_func(
+        wasm: &[Instruction],
+        evm_idx2offs: HashMap<usize, usize>,
+        wasm_idx2offs: HashMap<usize, usize>,
     ) {
-        assert_ne!(self.evm_start_function, 0); // filled in during emit_start()
-        assert_eq!(self.evm_exec_function, 0); // filled in below
-
-        let mut wasm: Vec<Instruction> = Default::default();
-        let debug_info = self.unfold_cfg(input_program, input_cfg, &mut wasm);
-        wasm.push(Instruction::End);
-
         let make_tab = |shift: &String, instr: &Instruction| -> String {
-            let length = 80 - format!("{}{}", shift, instr).to_string().len();
+            let length = 80 - format!("{}{}", shift, instr).len();
             let mut res = "".to_string();
             for _ in 0..length {
                 res.push(' ');
@@ -315,35 +314,30 @@ impl Compiler {
         let mut shift = String::default();
         std::fs::write(
             "compiled.wat",
-            wasm.clone()
-                .into_iter()
+            wasm.iter()
                 .enumerate()
                 .map(|(idx, instr)| {
-                    if instr == Instruction::Else || instr == Instruction::End {
+                    if instr == &Instruction::Else || instr == &Instruction::End {
                         for _ in 0..2 {
                             shift.pop();
                         }
                     }
-                    let res: String;
-                    match debug_info.get(&idx).and_then(|x| id2offs.get(x)) {
-                        Some(offs) => {
+                    let res = wasm_idx2offs
+                        .get(&idx)
+                        .and_then(|x| evm_idx2offs.get(x))
+                        .map_or_else(
+                            || format!("{}{}", shift, instr,),
+                            |offs| {
+                                format!(
+                                    "{}{} {}0x{:02x}",
+                                    shift,
+                                    instr,
+                                    make_tab(&shift, instr),
+                                    offs
+                                )
+                            },
+                        );
 
-                            res = format!(
-                                "{}{} {}0x{:02x}",
-                                shift,
-                                instr,
-                                make_tab(&shift, &instr),
-                                offs
-                            ).to_string();
-                        }
-                        None => {
-                            res = format!(
-                                "{}{}",
-                                shift,
-                                instr,
-                            ).to_string();
-                        }
-                    }
                     match instr {
                         Instruction::Block(_)
                         | Instruction::Else
@@ -359,8 +353,24 @@ impl Compiler {
                 .join("\n"),
         )
         .expect("fs error");
+    }
 
-        
+    /// Compiles the program's control-flow graph.
+    fn compile_cfg(
+        self: &mut Compiler,
+        input_cfg: &ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
+        input_program: &Program,
+        evm_idx2offs: HashMap<usize, usize>,
+    ) {
+        assert_ne!(self.evm_start_function, 0); // filled in during emit_start()
+        assert_eq!(self.evm_exec_function, 0); // filled in below
+
+        let mut wasm: Vec<Instruction> = Default::default();
+        let wasm_idx2offs = self.unfold_cfg(input_program, input_cfg, &mut wasm);
+        wasm.push(Instruction::End);
+
+        Self::debug_only_exec_func(&wasm, evm_idx2offs, wasm_idx2offs);
+
         let func_id = self.emit_function(Some("_evm_exec".to_string()), wasm);
         self.evm_exec_function = func_id;
     }

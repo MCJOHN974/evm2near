@@ -29,7 +29,16 @@ pub fn compile(
     runtime_library: Module,
     config: CompilerConfig,
 ) -> Module {
-    let (relooped_cfg, id2offs) = analyze_cfg(input_program);
+    let relooped_cfg= analyze_cfg(input_program);
+
+    let mut opcode_lines: Vec<String> = vec![];
+    let mut id2offs: HashMap<usize, usize> = Default::default();
+    input_program.0.iter().enumerate().fold(0_usize, |offs, (cnt, opcode)| {
+        opcode_lines.push(format!("0x{:02x}\t{}", offs, opcode));
+        id2offs.insert(cnt, offs);
+        offs + opcode.size()
+    });
+    std::fs::write("opcodes.evm", opcode_lines.join("\n")).expect("fs error");
 
     let mut compiler = Compiler::new(runtime_library, config);
     compiler.emit_wasm_start();

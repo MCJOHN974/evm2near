@@ -59,10 +59,9 @@ struct BlockStart(usize, usize, bool);
 
 pub fn analyze_cfg(
     program: &Program,
-) -> (
-    ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
-    HashMap<usize, usize>,
-) {
+) -> 
+    ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>
+ {
     let mut cfg = Cfg::from_edges(0, &Default::default()).unwrap();
     let mut node_info: HashMap<usize, (bool, bool)> = Default::default(); // label => (is_jumpdest, is_dynamic);
     let mut code_ranges: HashMap<usize, Range<usize>> = Default::default();
@@ -138,16 +137,6 @@ pub fn analyze_cfg(
         code_ranges.insert(start_offs, start_idx..curr_offs);
     }
 
-    let mut opcode_lines: Vec<String> = vec![];
-    let mut idx2offs: HashMap<usize, usize> = Default::default();
-    program.0.iter().enumerate().fold(0_usize, |offs, (cnt, opcode)| {
-        opcode_lines.push(format!("0x{:02x}\t{}", offs, opcode));
-        idx2offs.insert(cnt, offs);
-        offs + opcode.size()
-    });
-
-    std::fs::write("opcodes.evm", opcode_lines.join("\n")).expect("fs error");
-
     let with_ranges = cfg.map_label(|label| {
         let code_range = code_ranges
             .get(label)
@@ -159,5 +148,5 @@ pub fn analyze_cfg(
         is_jumpdest: node_info.get(&evm_label.label).unwrap().0,
         is_dynamic: node_info.get(&evm_label.label).unwrap().1,
     });
-    (relooped_cfg(with_flags), idx2offs)
+    relooped_cfg(with_flags)
 }

@@ -12,7 +12,7 @@ use parity_wasm::{
 };
 use relooper::graph::relooper::ReBlock;
 use relooper::graph::{caterpillar::CaterpillarLabel, relooper::ReSeq, supergraph::SLabel};
-use serde::__private::de;
+
 
 use crate::{
     abi::Functions,
@@ -255,7 +255,7 @@ impl Compiler {
                     match block.origin {
                         CaterpillarLabel::Original(orig_label) => {
                             let code = &program.0[orig_label.code_start..orig_label.code_end];
-                            for (idx, op) in code.into_iter().enumerate() {
+                            for (idx, op) in code.iter().enumerate() {
                                 let operands = encode_operands(op);
                                 res.extend(operands);
                                 let call = self.compile_operator(op);
@@ -286,7 +286,7 @@ impl Compiler {
         self: &mut Compiler,
         input_cfg: &ReSeq<SLabel<CaterpillarLabel<EvmLabel>>>,
         input_program: &Program,
-        mut id2offs: HashMap<usize, usize>,
+        id2offs: HashMap<usize, usize>,
     ) {
         assert_ne!(self.evm_start_function, 0); // filled in during emit_start()
         assert_eq!(self.evm_exec_function, 0); // filled in below
@@ -295,23 +295,14 @@ impl Compiler {
         let debug_info = self.unfold_cfg(input_program, input_cfg, &mut wasm);
         wasm.push(Instruction::End);
 
-        id2offs.insert(usize::MAX, usize::MAX);
-        // debug
-
-        for (wasmid, evmid) in &debug_info {
-            println!("wasmid {} => evmid {}", wasmid, evmid);
-        }
-
-        let wasmline2offs = |line: usize| {
-            println!("{}", line);
-            let evm_idx: usize;
-            match debug_info.get(&line) {
-                Some(idx) => {evm_idx = *idx;}
-                None => return None
+        let make_tab = |shift: &String, instr: &Instruction| -> String {
+            let length = 80 - format!("{}{}", shift, instr).to_string().len();
+            let mut res = "".to_string();
+            for _ in 0..length {
+                res.push(' ');
             }
-            id2offs.get(&evm_idx)
+            res
         };
-
         let mut shift = String::default();
         std::fs::write(
             "compiled.wat",
@@ -325,12 +316,14 @@ impl Compiler {
                         }
                     }
                     let res: String;
-                    match wasmline2offs(idx) {
+                    match debug_info.get(&idx).and_then(|x| id2offs.get(x)) {
                         Some(offs) => {
+
                             res = format!(
-                                "{}{} \t\t\t\t0x{:02x}",
+                                "{}{} {}0x{:02x}",
                                 shift,
                                 instr,
+                                make_tab(&shift, &instr),
                                 offs
                             ).to_string();
                         }

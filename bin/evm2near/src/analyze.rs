@@ -140,11 +140,9 @@ pub fn analyze_cfg(
 
     let mut opcode_lines: Vec<String> = vec![];
     let mut idx2offs: HashMap<usize, usize> = Default::default();
-    let mut cnt = 0;
-    program.0.iter().fold(0_usize, |offs, opcode| {
+    program.0.iter().enumerate().fold(0_usize, |offs, (cnt, opcode)| {
         opcode_lines.push(format!("0x{:02x}\t{}", offs, opcode));
         idx2offs.insert(cnt, offs);
-        cnt += 1;
         offs + opcode.size()
     });
 

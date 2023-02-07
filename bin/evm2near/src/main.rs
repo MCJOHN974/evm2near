@@ -9,6 +9,7 @@ mod encode;
 mod error;
 mod format;
 mod solidity;
+mod log;
 
 use clap::Parser;
 use parity_wasm::elements::Serialize;

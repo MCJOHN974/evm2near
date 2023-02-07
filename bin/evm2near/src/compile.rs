@@ -13,13 +13,16 @@ use parity_wasm::{
 use relooper::graph::relooper::ReBlock;
 use relooper::graph::{caterpillar::CaterpillarLabel, relooper::ReSeq, supergraph::SLabel};
 
-
+#[macro_use]
+use crate::log;
 use crate::{
     abi::Functions,
     analyze::{analyze_cfg, EvmLabel},
     config::CompilerConfig,
     encode::encode_operands,
+    log::log,
 };
+
 
 const TABLE_OFFSET: i32 = 0x1000;
 
@@ -37,8 +40,11 @@ pub fn compile(
         opcode_lines.push(format!("0x{:02x}\t{}", offs, opcode));
         id2offs.insert(cnt, offs);
         offs + opcode.size()
-    });
-    std::fs::write("opcodes.evm", opcode_lines.join("\n")).expect("fs error");
+    });// lets rewrite it as a macros
+
+    // std::fs::write("opcodes.evm", opcode_lines.join("\n")).expect("fs error");
+    log(opcode_lines.iter(), "log/opcodes.evm");
+    log!(opcode_lines.iter(), "log/opcodes_macros.evm");
 
     let mut compiler = Compiler::new(runtime_library, config);
     compiler.emit_wasm_start();

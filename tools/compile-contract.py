@@ -17,7 +17,7 @@ if recompile_compiler:
     os.system('make')
 
 os.system(f'rm {contract_name}.wa*')
-os.system(f'./evm2near test/{contract_name}.sol -o {contract_name}.wasm -b wasi')
+os.system(f'./evm2near etherium/contracts/{contract_name}.sol -o {contract_name}.wasm -b wasi')
 os.system(f'wasm2wat {contract_name}.wasm -o {contract_name}.wat {wasm2wat_flags}')
 
 if recompile_evmlib:

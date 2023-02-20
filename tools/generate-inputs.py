@@ -71,4 +71,4 @@ def dump_test_inputs(contract: str, file: str, number_of_tests_for_method: int):
 if __name__ == "__main__":
     for contract in os.listdir('test'):
         contract = contract[:-4]
-        dump_test_inputs(f"test/{contract}.sol", f"test_inputs/{contract}.txt", 100)
+        dump_test_inputs(f"etherium/contracts/{contract}.sol", f"test_inputs/{contract}.txt", 100)

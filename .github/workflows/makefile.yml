@@ -33,10 +33,10 @@ jobs:
       run: make
 
     - name: Compile const
-      run: ./evm2near test/const.sol -o const.wasm -b wasi
+      run: ./evm2near etherium/contracts/const.sol -o const.wasm -b wasi
 
     - name: Compile calc
-      run: ./evm2near test/calc.sol -o calc.wasm -b wasi
+      run: ./evm2near etherium/contracts/calc.sol -o calc.wasm -b wasi
       
     - name: Compile bench
-      run: ./evm2near test/bench.sol -o bench.wasm -b wasi
+      run: ./evm2near etherium/contracts/bench.sol -o bench.wasm -b wasi

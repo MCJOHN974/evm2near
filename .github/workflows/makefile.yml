@@ -36,7 +36,7 @@ jobs:
       run: ./evm2near test/const.sol -o const.wasm -b wasi
 
     - name: Install wasmtime
-      run: curl https://wasmtime.dev/install.sh -sSf | bash
+      run: bash <(curl https://wasmtime.dev/install.sh -sSf | bash; exit)
 
     - name: Run tests
       run: python3 tools/tests.py 

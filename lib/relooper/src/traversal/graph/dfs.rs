@@ -53,6 +53,7 @@ where
     }
 }
 
+// TODO: rewrite without recursion
 fn dfs_post_inner<T, ChIt, ChFun>(
     start: T,
     get_children: &mut ChFun,
@@ -69,7 +70,6 @@ fn dfs_post_inner<T, ChIt, ChFun>(
             dfs_post_inner(x, get_children, res, visited);
         }
     }
-
     res.push(start);
 }
 
@@ -82,32 +82,36 @@ where
     let mut visited: HashSet<T> = HashSet::from([start]);
     let mut res: Vec<T> = Vec::new();
 
-    dfs_post_inner(start, get_children, &mut res, &mut visited); //TODO rewrite using Iterator or at least without recursion
+    dfs_post_inner(start, get_children, &mut res, &mut visited);
 
     res.reverse();
     res
+
 }
 
-// TODO this duplication drives me mad, but it is the simpliest way to work around absence of common `Map`-like trait for Hash/BTree maps
 fn dfs_post_inner_ord<T, ChIt, ChFun>(
     start: T,
     get_children: &mut ChFun,
-    res: &mut Vec<T>,
-    visited: &mut BTreeSet<T>,
-) where
+) -> Vec<T> 
+where
     T: Ord + Eq + Copy,
     ChIt: IntoIterator<Item = T>,
     ChFun: FnMut(&T) -> ChIt,
 {
-    for x in get_children(&start) {
+    let mut res: Vec<T> = Default::default();
+    let mut stack = vec![start];
+    let mut visited: BTreeSet<T> = BTreeSet::from([start]);
+    while let Some(x) = stack.pop() {
         if !visited.contains(&x) {
             visited.insert(x);
-            dfs_post_inner_ord(x, get_children, res, visited);
+            for child in get_children(&x) { 
+                stack.push(child); 
+            }
         }
+        res.push(x); 
     }
-
-    res.push(start);
-}
+    res
+} 
 
 pub fn dfs_post_ord<T, ChIt, ChFun>(start: T, get_children: &mut ChFun) -> Vec<T>
 where
@@ -115,11 +119,7 @@ where
     ChIt: IntoIterator<Item = T>,
     ChFun: FnMut(&T) -> ChIt,
 {
-    let mut visited: BTreeSet<T> = BTreeSet::from([start]);
-    let mut res: Vec<T> = Vec::new();
-
-    dfs_post_inner_ord(start, get_children, &mut res, &mut visited); //TODO rewrite using Iterator or at least without recursion
-
+    let mut res: Vec<T> = dfs_post_inner_ord(start, get_children);
     res.reverse();
     res
 }

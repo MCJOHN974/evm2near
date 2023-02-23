@@ -53,27 +53,8 @@ where
     }
 }
 
-fn dfs_post_inner<T, ChIt, ChFun>(
-    start: T,
-    get_children: &mut ChFun,
-    res: &mut Vec<T>,
-    visited: &mut HashSet<T>,
-) where
-    T: Hash + Eq + Copy,
-    ChIt: IntoIterator<Item = T>,
-    ChFun: FnMut(&T) -> ChIt,
-{
-    for x in get_children(&start) {
-        if !visited.contains(&x) {
-            visited.insert(x);
-            dfs_post_inner(x, get_children, res, visited);
-        }
-    }
 
-    res.push(start);
-}
-
-pub fn dfs_post<T, ChIt, ChFun>(start: T, get_children: &mut ChFun) -> Vec<T>
+pub fn dfs_post_hashable<T, ChIt, ChFun>(start: T, get_children: &mut ChFun) -> Vec<T>
 where
     T: Hash + Eq + Copy,
     ChIt: IntoIterator<Item = T>,
@@ -81,35 +62,24 @@ where
 {
     let mut visited: HashSet<T> = HashSet::from([start]);
     let mut res: Vec<T> = Vec::new();
+    let mut stack = vec![start];
 
-    dfs_post_inner(start, get_children, &mut res, &mut visited); //TODO rewrite using Iterator or at least without recursion
+    while let Some(current) = stack.pop() {
+        for chld in get_children(&current) {
+            if !visited.contains(&chld) {
+                visited.insert(chld);
+                stack.push(chld);
+            } 
+        }
+        res.push(current);
+    }
 
     res.reverse();
     res
 }
 
-// TODO this duplication drives me mad, but it is the simpliest way to work around absence of common `Map`-like trait for Hash/BTree maps
-fn dfs_post_inner_ord<T, ChIt, ChFun>(
-    start: T,
-    get_children: &mut ChFun,
-    res: &mut Vec<T>,
-    visited: &mut BTreeSet<T>,
-) where
-    T: Ord + Eq + Copy,
-    ChIt: IntoIterator<Item = T>,
-    ChFun: FnMut(&T) -> ChIt,
-{
-    for x in get_children(&start) {
-        if !visited.contains(&x) {
-            visited.insert(x);
-            dfs_post_inner_ord(x, get_children, res, visited);
-        }
-    }
 
-    res.push(start);
-}
-
-pub fn dfs_post_ord<T, ChIt, ChFun>(start: T, get_children: &mut ChFun) -> Vec<T>
+pub fn dfs_post_comparable<T, ChIt, ChFun>(start: T, get_children: &mut ChFun) -> Vec<T>
 where
     T: Ord + Eq + Copy,
     ChIt: IntoIterator<Item = T>,
@@ -117,9 +87,46 @@ where
 {
     let mut visited: BTreeSet<T> = BTreeSet::from([start]);
     let mut res: Vec<T> = Vec::new();
+    let mut stack = vec![start];
 
-    dfs_post_inner_ord(start, get_children, &mut res, &mut visited); //TODO rewrite using Iterator or at least without recursion
+    while let Some(current) = stack.pop() {
+        for chld in get_children(&current) {
+            if !visited.contains(&chld) {
+                visited.insert(chld);
+                stack.push(chld);
+            } 
+        }
+        res.push(current);
+    }
 
     res.reverse();
     res
 }
+
+use crate::graph::cfg::{Cfg, CfgEdge};
+use std::collections::HashMap;
+
+
+    #[test]
+    pub fn test_dfs() {
+        let cfg = Cfg::from_edges(
+            0,
+            &HashMap::from([
+                (0, CfgEdge::Cond(1, 2)),
+                (1, CfgEdge::Uncond(2)),
+                (2, CfgEdge::Uncond(3)),
+                (3, CfgEdge::Cond(4, 5)),
+                (4, CfgEdge::Uncond(6)),
+                (5, CfgEdge::Uncond(6)),
+            ]),
+        );
+        let comparable = dfs_post_comparable(&0, &mut |node| cfg.children(node));
+        let hashable = dfs_post_hashable(&0, &mut |node| cfg.children(node));
+
+        let mut to_write: Vec<String> = vec!["comparable:\n".to_string()];
+        to_write.push(comparable.into_iter().map(|x|x.to_string()).collect::<Vec<_>>().join(" "));
+        to_write.push("\nhashable\n".to_string());
+        to_write.push(hashable.into_iter().map(|x|x.to_string()).collect::<Vec<_>>().join(" "));
+
+        std::fs::write("dfs.txt", to_write.join("\n")).unwrap();
+    }

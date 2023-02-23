@@ -1,5 +1,5 @@
 use crate::graph::cfg::{Cfg, CfgLabel};
-use crate::traversal::graph::dfs::dfs_post;
+use crate::traversal::graph::dfs::dfs_post_hashable;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
@@ -56,7 +56,8 @@ pub struct NodeOrdering<TLabel: CfgLabel> {
 
 impl<TLabel: CfgLabel> NodeOrdering<TLabel> {
     pub fn new(cfg: &Cfg<TLabel>, entry: TLabel) -> Self {
-        let vec = dfs_post(entry, &mut |x| cfg.children(x).into_iter().copied());
+        print!("\n\n dfs_post_hashable called \n\n");
+        let vec = dfs_post_hashable(entry, &mut |x| cfg.children(x).into_iter().copied());
         let idx: HashMap<TLabel, usize> = vec.iter().enumerate().map(|(i, &n)| (n, i)).collect();
         Self { vec, idx }
     }

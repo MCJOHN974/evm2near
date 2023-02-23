@@ -54,6 +54,7 @@ pub struct NodeOrdering<TLabel: CfgLabel> {
     vec: Vec<TLabel>,
 }
 
+
 impl<TLabel: CfgLabel> NodeOrdering<TLabel> {
     pub fn new(cfg: &Cfg<TLabel>, entry: TLabel) -> Self {
         print!("\n\n dfs_post_hashable called \n\n");

@@ -14,18 +14,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       
-    - name: Install dependecies
-      run: cargo build || true
-      
     - name: Build
       run: make
 
     - name: Run unit tests
       run: make check
 
-    - name: Compile const
-      run: ./evm2near test/const.sol -o const.wasm -b wasi
-
-    - name: Install Wasmtime & Run tests
+    - name: Run tests
       run: python3 tools/tests.py
 

@@ -38,5 +38,4 @@ jobs:
     - name: Install Wasmtime & Run tests
       run: |
         curl https://wasmtime.dev/install.sh -sSf | bash
-        source ~/.bashrc
-        python3 tools/tests.py 
+        bash -c "python3 tools/tests.py" 

@@ -14,6 +14,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       
+    - name: Install dependecies
+      run: cargo build || true
+      
     - name: Build
       run: make
 

@@ -29,7 +29,7 @@ use relooper::graph::{
 
 use crate::{
     abi::Functions,
-    analyze::{basic_cfg, BasicCfg, Idx, NodeInfo, Offs},
+    analyze::{basic_cfg, BasicCfg, Idx, Offs},
     config::CompilerConfig,
     encode::encode_push,
 };
@@ -166,7 +166,7 @@ impl Compiler {
 
     /// Emit an empty `_start` function to make all WebAssembly runtimes happy.
     fn emit_wasm_start(self: &mut Compiler) {
-        _ = self.emit_function(Some("_start".to_string()), vec![Instruction::Unreachable]);
+        _ = self.emit_function(Some("_start".to_string()), vec![]);
     }
 
     /// Synthesizes a start function that initializes the EVM state with the
@@ -275,7 +275,7 @@ impl Compiler {
             let code_range = basic_cfg
                 .code_ranges
                 .get(label)
-                .unwrap_or_else(|| panic!("no code ranges for {}", *label));
+                .unwrap_or_else(|| panic!("no code ranges for {}", label));
             let &node_info = basic_cfg.node_info.get(label).unwrap();
             let evm_label = EvmBlock::new(*label, code_range.start, code_range.end);
             EvmCfgLabel {

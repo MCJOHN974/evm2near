@@ -147,7 +147,6 @@ impl<TLabel: CfgLabel + Debug> SuperGraph<TLabel> {
         // if given node have internal edges ending in its head, it will be seen as incoming supernode, which isn't useful
         incoming.remove(node);
 
-        // TODO hate there is no pattern-match adapters for simple collections, or is there?
         match incoming.len() {
             0 => None,
             1 => Some(MergeInto(incoming.first().unwrap().head)),
@@ -203,7 +202,7 @@ impl<TLabel: CfgLabel + Debug> SuperGraph<TLabel> {
                 .contained
                 .iter()
                 .map(|&l| (l, *self.cfg.edge(&l)))
-                .filter(|(_l, e)| e.to_vec().into_iter().any(|&to| to == split_snode.head))
+                .filter(|(_l, e)| e.iter().any(|&to| to == split_snode.head))
                 .collect();
 
             for (f, e) in from_split {
@@ -266,6 +265,7 @@ impl<TLabel: CfgLabel + Debug> SuperGraph<TLabel> {
             }
 
             if let Some((_, biggest_splits)) = split_len.last_key_value() {
+                // TODO select by internal node count?
                 let split_node = biggest_splits.first().unwrap();
                 let split_for = splits.get(split_node).unwrap();
 
@@ -315,7 +315,12 @@ mod test {
 
     #[test]
     fn simplest() {
-        let cfg = Cfg::from_vec(0, &[(0, Cond(1, 2)), (1, Uncond(2)), (2, Cond(3, 1))]);
+        let cfg = Cfg::from_edges(
+            0,
+            &vec![(0, Cond(1, 2)), (1, Uncond(2)), (2, Cond(3, 1))]
+                .into_iter()
+                .collect(),
+        );
         let reduced = reduce(&cfg);
 
         assert!(test_reduce(cfg, reduced));
@@ -323,14 +328,16 @@ mod test {
 
     #[test]
     fn irreducible() {
-        let cfg = Cfg::from_vec(
+        let cfg = Cfg::from_edges(
             0,
-            &[
+            &vec![
                 (0, Cond(1, 2)),
                 (1, Uncond(4)),
                 (4, Uncond(2)),
                 (2, Cond(3, 1)),
-            ],
+            ]
+            .into_iter()
+            .collect(),
         );
         let reduced = reduce(&cfg);
 

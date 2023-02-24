@@ -1,6 +1,6 @@
 use crate::graph::cfg::{Cfg, CfgEdge, CfgLabel};
 use crate::traversal::graph::bfs::Bfs;
-use crate::traversal::graph::dfs::{dfs_post, Dfs}_hashable;
+use crate::traversal::graph::dfs::{dfs_post_hashable, Dfs};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::vec::Vec;
 

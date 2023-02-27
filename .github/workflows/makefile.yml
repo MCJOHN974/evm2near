@@ -42,7 +42,7 @@ jobs:
 
     - name: Lints
       run: |
-        cargo fmt --workspace -- --check
+        cargo fmt --check
         cargo clippy --workspace -- -D warnings
 
     - name: Compile const

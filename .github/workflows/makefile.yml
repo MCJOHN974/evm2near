@@ -27,4 +27,7 @@ jobs:
           echo "step 5"
           export WASMTIME_HOME="$HOME/.wasmtime"
           export PATH="$WASMTIME_HOME/bin:$PATH"SELENIUM_JAR_PATH=/usr/share/java/selenium-server.jar
-          bash -c "wasmtime"
+          echo "step 6"
+          env
+          echo "step 7"
+          bash -c "wasmtime --help"

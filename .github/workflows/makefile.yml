@@ -19,7 +19,6 @@ jobs:
           cat /home/runner/.bashrc
           env
           bash -c "env"
-          bash -c "which wasmtime"
           source /home/runner/.bashrc
           env
           wasmtime

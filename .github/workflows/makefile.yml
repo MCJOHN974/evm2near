@@ -18,7 +18,11 @@ jobs:
           curl https://wasmtime.dev/install.sh -sSf | bash
           cat /home/runner/.bashrc
           env
+          echo "step 2"
           bash -c "env"
+          echo "step 3"
           source /home/runner/.bashrc
+          echo "step 4"
           env
-          wasmtime
+          echo "step 5"
+          bash -c "wasmtime"

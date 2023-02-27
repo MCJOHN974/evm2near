@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::fmt::Debug;
 use std::hash::Hash;
 
 pub struct Dfs<T, ChFun> {
@@ -53,80 +54,172 @@ where
     }
 }
 
+pub trait Contains<T> {
+    fn contains(&self, item: &T) -> bool;
+    fn insert(&mut self, item: T);
+    fn default() -> Self;
+}
 
-pub fn dfs_post_hashable<T, ChIt, ChFun>(start: T, get_children: &mut ChFun) -> Vec<T>
+impl<T> Contains<T> for HashSet<T>
+where
+    T: Eq + Hash,
+{
+    fn contains(&self, item: &T) -> bool {
+        HashSet::contains(self, item)
+    }
+
+    fn insert(&mut self, item: T) {
+        HashSet::insert(self, item);
+    }
+
+    fn default() -> Self {
+        HashSet::new()
+    }
+}
+
+impl<T> Contains<T> for BTreeSet<T>
+where
+    T: Eq + Ord,
+{
+    fn contains(&self, item: &T) -> bool {
+        BTreeSet::contains(self, item)
+    }
+
+    fn insert(&mut self, item: T) {
+        BTreeSet::insert(self, item);
+    }
+
+    fn default() -> Self {
+        BTreeSet::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct DfsPost<T, ChFun, TContains> {
+    visited: TContains,
+    queued: TContains,
+    stack: Vec<VecDeque<T>>,
+    get_children: ChFun,
+}
+
+impl<T, ChIt, ChFun, TContains> DfsPost<T, ChFun, TContains>
+where
+    T: Eq + Copy,
+    ChIt: IntoIterator<Item = T>,
+    ChFun: FnMut(&T) -> ChIt,
+    TContains: Contains<T>,
+{
+    pub fn new(start: T, get_children: ChFun) -> Self {
+        let mut visited = TContains::default();
+        visited.insert(start);
+        let queued = TContains::default();
+        Self {
+            visited,
+            queued,
+            stack: vec![VecDeque::from(vec![start])],
+            get_children,
+        }
+    }
+}
+
+impl<T, ChIt, ChFun, TContains> Iterator for DfsPost<T, ChFun, TContains>
+where
+    T: Eq + Copy,
+    ChIt: IntoIterator<Item = T>,
+    ChFun: FnMut(&T) -> ChIt,
+    TContains: Contains<T>,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.stack.last_mut() {
+                None => {
+                    return None;
+                }
+                Some(queue) => match queue.front() {
+                    None => {
+                        return None; //todo get another from stack?
+                    }
+                    Some(qtop) => {
+                        if self.queued.contains(qtop) {
+                            let r = queue.pop_front().unwrap();
+                            if queue.is_empty() {
+                                self.stack.pop();
+                            }
+                            return Some(r);
+                        } else {
+                            self.queued.insert(*qtop);
+                            let children = (self.get_children)(qtop)
+                                .into_iter()
+                                .filter(|c| {
+                                    if self.visited.contains(c) {
+                                        false
+                                    } else {
+                                        self.visited.insert(*c);
+                                        true
+                                    }
+                                })
+                                .collect::<VecDeque<_>>();
+                            if !children.is_empty() {
+                                self.stack.push(children);
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+pub fn dfs_post_hashable<T, ChIt, ChFun>(start: T, get_children: ChFun) -> Vec<T>
 where
     T: Hash + Eq + Copy,
     ChIt: IntoIterator<Item = T>,
     ChFun: FnMut(&T) -> ChIt,
 {
-    let mut visited: HashSet<T> = HashSet::from([start]);
-    let mut res: Vec<T> = Vec::new();
-    let mut stack = vec![start];
-
-    while let Some(current) = stack.pop() {
-        for chld in get_children(&current) {
-            if !visited.contains(&chld) {
-                visited.insert(chld);
-                stack.push(chld);
-            } 
-        }
-        res.push(current);
-    }
-
-    res.reverse();
-    res
+    let mut vec = DfsPost::<T, ChFun, HashSet<T>>::new(start, get_children).collect::<Vec<_>>();
+    vec.reverse();
+    vec
 }
 
-
-pub fn dfs_post_comparable<T, ChIt, ChFun>(start: T, get_children: &mut ChFun) -> Vec<T>
+pub fn dfs_post_comparable<T, ChIt, ChFun>(start: T, get_children: ChFun) -> Vec<T>
 where
     T: Ord + Eq + Copy,
     ChIt: IntoIterator<Item = T>,
     ChFun: FnMut(&T) -> ChIt,
 {
-    let mut visited: BTreeSet<T> = BTreeSet::from([start]);
-    let mut res: Vec<T> = Vec::new();
-    let mut stack = vec![start];
-
-    while let Some(current) = stack.pop() {
-        for chld in get_children(&current) {
-            if !visited.contains(&chld) {
-                visited.insert(chld);
-                stack.push(chld);
-            } 
-        }
-        res.push(current);
-    }
-
-    res.reverse();
-    res
+    let mut vec = DfsPost::<T, ChFun, BTreeSet<T>>::new(start, get_children).collect::<Vec<_>>();
+    vec.reverse();
+    vec
 }
 
-use crate::graph::cfg::{Cfg, CfgEdge};
-use std::collections::HashMap;
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
 
+    use super::dfs_post_hashable;
 
     #[test]
-    pub fn test_dfs() {
-        let cfg = Cfg::from_edges(
-            0,
-            &HashMap::from([
-                (0, CfgEdge::Cond(1, 2)),
-                (1, CfgEdge::Uncond(2)),
-                (2, CfgEdge::Uncond(3)),
-                (3, CfgEdge::Cond(4, 5)),
-                (4, CfgEdge::Uncond(6)),
-                (5, CfgEdge::Uncond(6)),
-            ]),
-        );
-        let comparable = dfs_post_comparable(&0, &mut |node| cfg.children(node));
-        let hashable = dfs_post_hashable(&0, &mut |node| cfg.children(node));
+    fn test_simple() {
+        let map: HashMap<i32, Vec<i32>> = HashMap::from_iter(vec![
+            (0, vec![1, 2]),
+            (1, vec![3, 4]),
+            (2, vec![4, 8]),
+            (3, vec![5, 6]),
+            (4, vec![9]),
+            (5, vec![7]),
+            (6, vec![7]),
+            (7, vec![9]),
+            (8, vec![9, 10]),
+            (9, vec![10]),
+            (10, vec![]),
+        ]);
 
-        let mut to_write: Vec<String> = vec!["comparable:\n".to_string()];
-        to_write.push(comparable.into_iter().map(|x|x.to_string()).collect::<Vec<_>>().join(" "));
-        to_write.push("\nhashable\n".to_string());
-        to_write.push(hashable.into_iter().map(|x|x.to_string()).collect::<Vec<_>>().join(" "));
-
-        std::fs::write("dfs.txt", to_write.join("\n")).unwrap();
+        let dfs_post: Vec<i32> = dfs_post_hashable(&0, |x| map.get(x).unwrap())
+            .into_iter()
+            .copied()
+            .collect();
+        assert_eq!(dfs_post, vec![0, 2, 8, 1, 4, 3, 6, 5, 7, 9, 10]);
     }
+}

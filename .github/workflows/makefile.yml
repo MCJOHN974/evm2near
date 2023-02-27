@@ -2,45 +2,42 @@ name: Compile CI
 
 on:
   push:
-    branches: [ "master", "*" ]
+    branches: ["master", "*"]
   pull_request:
-    branches: [ "master", "*" ]
+    branches: ["master", "*"]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Install solidity & wasm tools
-      run: |
-        sudo add-apt-repository ppa:ethereum/ethereum
-        sudo apt-get update
-        sudo apt-get install -y wabt solc
+      - name: Install solidity & wasm tools
+        run: |
+          sudo add-apt-repository ppa:ethereum/ethereum
+          sudo apt-get update
+          sudo apt-get install -y wabt solc
 
-    - name: Add wasi target
-      run: rustup target add wasm32-wasi
-      
-    - name: Add unknown target
-      run: rustup target add wasm32-unknown-unknown
-      
-    - name: Install dependecies
-      run: cargo build || true
-      
-    - name: Build
-      run: make
+      - name: Add wasi target
+        run: rustup target add wasm32-wasi
 
-    - name: Run unit tests
-      run: make check
+      - name: Add unknown target
+        run: rustup target add wasm32-unknown-unknown
 
-    - name: Compile const
-      run: ./evm2near test/const.sol -o const.wasm -b wasi
+      - name: Install dependecies
+        run: cargo build || true
 
-    - name: Install Wasmtime & Run tests
-      run: |
-        curl https://wasmtime.dev/install.sh -sSf | bash
-        bash 
-        python3 tools/tests.py
-        exit
+      - name: Build
+        run: make
+
+      - name: Run unit tests
+        run: make check
+
+      - name: Compile const
+        run: ./evm2near test/const.sol -o const.wasm -b wasi
+
+      - name: Install Wasmtime & Run tests
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          bash -c "python3 tools/tests.py"

@@ -35,6 +35,9 @@ jobs:
     - name: Run unit tests
       run: make check
 
+    - name: Install dependencies for lints
+      run: rustup component add rustfmt --toolchain nightly-2022-09-07-x86_64-unknown-linux-gnu
+
     - name: Lints
       run: |
         cargo fmt --check

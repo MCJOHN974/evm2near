@@ -2,7 +2,7 @@ name: Compile CI
 
 on:
   push:
-    branches: [ "master", "*" ]
+    branches: [ "master" ]
   pull_request:
     branches: [ "master", "*" ]
 
@@ -27,7 +27,7 @@ jobs:
       run: rustup target add wasm32-unknown-unknown
       
     - name: Install dependecies
-      run: cargo build || true
+      run:  cargo fetch --locked
       
     - name: Build
       run: make

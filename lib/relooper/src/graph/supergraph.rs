@@ -117,7 +117,7 @@ impl<TLabel: CfgLabel + Debug> SuperGraph<TLabel> {
     /// We are using that order for traversing supernodes graph for choosing between merge/split actions
     fn snode_order(&self) -> Vec<SLabel<TLabel>> {
         let start = self.nodes.get(&self.cfg.entry).unwrap().clone();
-        let res: Vec<_> = DfsPost::<_, _, HashSet<_>>::reverse(start.head, |slabel| {
+        DfsPost::<_, _, HashSet<_>>::reverse(start.head, |slabel| {
             let snode = self.nodes.get(slabel).unwrap();
             snode.contained.iter().flat_map(|l| {
                 self.cfg
@@ -126,9 +126,6 @@ impl<TLabel: CfgLabel + Debug> SuperGraph<TLabel> {
                     .map(|to| *self.label_location.get(to).unwrap())
             })
         })
-        .into_iter()
-        .collect();
-        res
     }
 
     /// finding out applicable action for given supernode

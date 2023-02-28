@@ -171,7 +171,6 @@ pub struct NodeOrdering<TLabel: CfgLabel> {
 
 impl<TLabel: CfgLabel> NodeOrdering<TLabel> {
     pub fn new(cfg: &Cfg<TLabel>, entry: TLabel) -> Self {
-        print!("\n\n dfs_post_hashable called \n\n");
         let vec = dfs_post_hashable(entry, |x| cfg.children(x).into_iter().copied());
         let idx: HashMap<TLabel, usize> = vec.iter().enumerate().map(|(i, &n)| (n, i)).collect();
         Self { vec, idx }

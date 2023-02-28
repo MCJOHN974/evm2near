@@ -110,8 +110,7 @@ where
     TContains: Contains<T>,
 {
     pub fn new(start: T, get_children: ChFun) -> Self {
-        let mut visited = TContains::default();
-        visited.insert(start);
+        let visited = TContains::default();
         let queued = TContains::default();
         Self {
             visited,
@@ -139,27 +138,21 @@ where
                 }
                 Some(queue) => match queue.front() {
                     None => {
-                        return None; //todo get another from stack?
+                        self.stack.pop();
                     }
                     Some(qtop) => {
-                        if self.queued.contains(qtop) {
-                            let r = queue.pop_front().unwrap();
-                            if queue.is_empty() {
-                                self.stack.pop();
+                        if self.visited.contains(qtop) {
+                            if !self.queued.contains(qtop) {
+                                self.queued.insert(*qtop);
+                                return Some(queue.pop_front().unwrap());
+                            } else {
+                                queue.pop_front();
                             }
-                            return Some(r);
                         } else {
-                            self.queued.insert(*qtop);
+                            self.visited.insert(*qtop);
                             let children = (self.get_children)(qtop)
                                 .into_iter()
-                                .filter(|c| {
-                                    if self.visited.contains(c) {
-                                        false
-                                    } else {
-                                        self.visited.insert(*c);
-                                        true
-                                    }
-                                })
+                                .filter(|x| !self.queued.contains(x) && !self.visited.contains(x))
                                 .collect::<VecDeque<_>>();
                             if !children.is_empty() {
                                 self.stack.push(children);
@@ -221,5 +214,63 @@ mod test {
             .copied()
             .collect();
         assert_eq!(dfs_post, vec![0, 2, 8, 1, 4, 3, 6, 5, 7, 9, 10]);
+    }
+
+    #[test]
+    fn test_const() {
+        let map: HashMap<i32, Vec<i32>> = HashMap::from_iter(vec![
+            (0, vec![1, 2]),
+            (1, vec![6]),
+            (2, vec![3, 4]),
+            (3, vec![4, 5]),
+            (4, vec![6]),
+            (5, vec![6]),
+            (6, vec![]),
+        ]);
+
+        let dfs_post: Vec<i32> = dfs_post_hashable(&0, |x| map.get(x).unwrap())
+            .into_iter()
+            .copied()
+            .collect();
+
+        assert_eq!(dfs_post, vec![0, 2, 3, 5, 4, 1, 6]);
+    }
+
+    #[test]
+    fn test_const_modified() {
+        let map: HashMap<i32, Vec<i32>> = HashMap::from_iter(vec![
+            (0, vec![1, 2]),
+            (1, vec![6]),
+            (2, vec![3, 4]),
+            (3, vec![4, 5]),
+            (4, vec![5, 6]),
+            (5, vec![6]),
+            (6, vec![]),
+        ]);
+
+        let dfs_post: Vec<i32> = dfs_post_hashable(&0, |x| map.get(x).unwrap())
+            .into_iter()
+            .copied()
+            .collect();
+
+        assert_eq!(dfs_post, vec![0, 2, 3, 4, 5, 1, 6]);
+    }
+
+    #[test]
+    fn test_simple_cycle() {
+        let map: HashMap<i32, Vec<i32>> = HashMap::from_iter(vec![
+            (0, vec![1]),
+            (1, vec![2, 3]),
+            (2, vec![0, 4]),
+            (3, vec![4]),
+            (4, vec![]),
+        ]);
+
+        let dfs_post: Vec<i32> = dfs_post_hashable(&0, |x| map.get(x).unwrap())
+            .into_iter()
+            .copied()
+            .collect();
+
+        assert_eq!(dfs_post, vec![0, 1, 3, 2, 4]);
     }
 }

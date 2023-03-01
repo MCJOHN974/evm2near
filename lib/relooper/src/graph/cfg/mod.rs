@@ -10,7 +10,7 @@ pub trait CfgLabel: Copy + Hash + Eq + Ord + Debug {}
 
 impl<T: Copy + Hash + Eq + Ord + Debug> CfgLabel for T {}
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CfgEdge<TLabel> {
     Uncond(TLabel),
     Cond(TLabel, TLabel),
@@ -32,6 +32,19 @@ impl<TLabel> CfgEdge<TLabel> {
                 inner: [None, None],
                 index: 0,
             },
+        }
+    }
+
+    // todo not sure about naming there
+    pub(crate) fn apply<F: Fn(&TLabel) -> TLabel>(&mut self, mapping: F) {
+        match self {
+            Uncond(t) => {
+                *self = Uncond(mapping(t));
+            }
+            Cond(t, f) => {
+                *self = Cond(mapping(t), mapping(f));
+            }
+            Terminal => {}
         }
     }
 
@@ -165,9 +178,9 @@ impl<T: Eq + Hash + Clone> Cfg<T> {
         Self::check_previous_edge(prev_edge);
     }
 
-    pub fn remove_edge(&mut self, from: T, edge: CfgEdge<T>) {
+    pub fn remove_edge(&mut self, from: T, edge: &CfgEdge<T>) {
         let removed_edge = self.out_edges.remove(&from);
-        assert!(removed_edge == Some(edge));
+        assert!(removed_edge.as_ref() == Some(edge));
     }
 
     pub fn add_edge_or_promote(&mut self, from: T, to: T) {
@@ -183,12 +196,18 @@ impl<T: Eq + Hash + Clone> Cfg<T> {
             .get(label)
             .expect("any node should have outgoing edges")
     }
+
+    pub fn edge_mut(&mut self, label: &T) -> &mut CfgEdge<T> {
+        self.out_edges
+            .get_mut(label)
+            .expect("any node should have outgoing edges")
+    }
 }
 
 impl<TLabel: Eq + Hash + Copy> Cfg<TLabel> {
-    pub fn from_edges(entry: TLabel, edges: &HashMap<TLabel, CfgEdge<TLabel>>) -> Self {
+    pub fn from_edges(entry: TLabel, edges: HashMap<TLabel, CfgEdge<TLabel>>) -> Self {
         let mut cfg = Cfg::new(entry);
-        for (&from, &edge) in edges.iter() {
+        for (from, edge) in edges.into_iter() {
             cfg.add_edge(from, edge);
         }
 

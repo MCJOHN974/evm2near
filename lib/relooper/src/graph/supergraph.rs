@@ -156,7 +156,7 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
             .contained
             .iter()
             .copied()
-            .map(|inner| (inner, *self.cfg.edge(&inner)))
+            .map(|inner| (inner, self.cfg.edge(&inner).clone()))
             .collect();
 
         //duplicate every label in that supernode (for each split except the first one, bc original version can be reused)
@@ -173,24 +173,18 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
             }
 
             // copy internal & outgoing edges
-            for (o_from, &edge) in outgoing_edges.iter() {
-                let curr_from = versions_mapping[o_from];
+            for (o_from, edge) in &outgoing_edges {
+                let curr_from = versions_mapping[&o_from];
                 // in case of internal edge, we should redirect that edge to new copy of internal node
                 let maybe_redirected_edge = edge.map(|l| *versions_mapping.get(l).unwrap_or(l));
                 self.cfg.add_edge(curr_from, maybe_redirected_edge);
             }
 
-            let from_split: HashMap<_, _> = split_for
-                .contained
-                .iter()
-                .map(|&l| (l, *self.cfg.edge(&l)))
-                .filter(|(_l, e)| e.iter().any(|&to| to == split_snode.head))
-                .collect();
-
-            for (f, e) in from_split {
-                let redirected = e.map(|to| *versions_mapping.get(to).unwrap_or(to));
-                self.cfg.remove_edge(f, e);
-                self.cfg.add_edge(f, redirected);
+            for &f in &split_for.contained {
+                let e = self.cfg.edge_mut(&f);
+                if e.iter().any(|&to| to == split_snode.head) {
+                    e.apply(|to| *versions_mapping.get(to).unwrap_or(to))
+                }
             }
 
             // populate supernode graph with new node's new version (for each split)
@@ -299,7 +293,7 @@ mod test {
     fn simplest() {
         let cfg = Cfg::from_edges(
             0,
-            &vec![(0, Cond(1, 2)), (1, Uncond(2)), (2, Cond(3, 1))]
+            vec![(0, Cond(1, 2)), (1, Uncond(2)), (2, Cond(3, 1))]
                 .into_iter()
                 .collect(),
         );
@@ -312,7 +306,7 @@ mod test {
     fn irreducible() {
         let cfg = Cfg::from_edges(
             0,
-            &vec![
+            vec![
                 (0, Cond(1, 2)),
                 (1, Uncond(4)),
                 (4, Uncond(2)),

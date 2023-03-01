@@ -6,9 +6,9 @@ use std::hash::Hash;
 
 mod cfg_parsing;
 
-pub trait CfgLabel: Copy + Hash + Eq + Ord + Sized {}
+pub trait CfgLabel: Copy + Hash + Eq + Ord + Debug {}
 
-impl<T: Copy + Hash + Eq + Ord + Sized> CfgLabel for T {}
+impl<T: Copy + Hash + Eq + Ord + Debug> CfgLabel for T {}
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CfgEdge<TLabel> {

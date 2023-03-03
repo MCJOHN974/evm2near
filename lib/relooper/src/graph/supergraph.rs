@@ -280,12 +280,12 @@ mod test {
             origin_mapping.entry(x.origin).or_default().insert(*x);
         }
 
-        origin_cfg.edges().iter().all(|(from, &e)| {
+        origin_cfg.edges().iter().all(|(from, e)| {
             origin_mapping
                 .get(from)
                 .unwrap()
                 .iter()
-                .all(|&r_from| reduced_cfg.edge(&r_from).map(|x| x.origin) == e)
+                .all(|&r_from| &reduced_cfg.edge(&r_from).map(|x| x.origin) == e)
         })
     }
 
@@ -311,6 +311,25 @@ mod test {
                 (1, Uncond(4)),
                 (4, Uncond(2)),
                 (2, Cond(3, 1)),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let reduced = reduce(&cfg);
+
+        assert!(test_reduce(cfg, reduced));
+    }
+
+    #[test]
+    fn moderate() {
+        let cfg = Cfg::from_edges(
+            0,
+            vec![
+                (0, Cond(1, 2)),
+                (1, Cond(3, 4)),
+                (2, Cond(3, 5)),
+                (3, Uncond(4)),
+                (4, Cond(2, 5)),
             ]
             .into_iter()
             .collect(),

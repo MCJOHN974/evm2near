@@ -174,7 +174,7 @@ impl<TLabel: CfgLabel> SuperGraph<TLabel> {
 
             // copy internal & outgoing edges
             for (o_from, edge) in &outgoing_edges {
-                let curr_from = versions_mapping[&o_from];
+                let curr_from = versions_mapping[o_from];
                 // in case of internal edge, we should redirect that edge to new copy of internal node
                 let maybe_redirected_edge = edge.map(|l| *versions_mapping.get(l).unwrap_or(l));
                 self.cfg.add_edge(curr_from, maybe_redirected_edge);

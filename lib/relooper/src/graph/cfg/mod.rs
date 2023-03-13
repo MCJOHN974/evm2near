@@ -1,4 +1,4 @@
-use crate::graph::cfg::CfgEdge::{Cond, Terminal, Uncond};
+use crate::graph::cfg::CfgEdge::{Cond, Switch, Terminal, Uncond};
 use crate::traversal::graph::bfs::Bfs;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
@@ -14,45 +14,62 @@ impl<T: Copy + Hash + Eq + Ord + Debug> CfgLabel for T {}
 pub enum CfgEdge<TLabel> {
     Uncond(TLabel),
     Cond(TLabel, TLabel),
+    Switch(Vec<(usize, TLabel)>),
     Terminal,
 }
 
 impl<TLabel> CfgEdge<TLabel> {
-    pub fn iter(&self) -> CfgEdgeIter<&TLabel> {
+    // TODO temporary stabbed with vec iterator FIXME
+    // pub fn iter(&self) -> CfgEdgeIter<&TLabel> {
+    //     match self {
+    //         Self::Uncond(u) => CfgEdgeIter {
+    //             inner: [Some(u), None],
+    //             index: 0,
+    //         },
+    //         Self::Cond(cond, fallthrough) => CfgEdgeIter {
+    //             inner: [Some(cond), Some(fallthrough)],
+    //             index: 0,
+    //         },
+    //         Self::Terminal => CfgEdgeIter {
+    //             inner: [None, None],
+    //             index: 0,
+    //         },
+    //     }
+    // }
+
+    pub fn iter(&self) -> std::vec::IntoIter<&TLabel> {
         match self {
-            Self::Uncond(u) => CfgEdgeIter {
-                inner: [Some(u), None],
-                index: 0,
-            },
-            Self::Cond(cond, fallthrough) => CfgEdgeIter {
-                inner: [Some(cond), Some(fallthrough)],
-                index: 0,
-            },
-            Self::Terminal => CfgEdgeIter {
-                inner: [None, None],
-                index: 0,
-            },
+            Self::Uncond(u) => vec![u].into_iter(),
+            Self::Cond(cond, fallthrough) => vec![cond, fallthrough].into_iter(),
+            Self::Switch(v) => v.iter().map(|(_, x)| x).collect::<Vec<_>>().into_iter(),
+            Self::Terminal => vec![].into_iter(),
         }
     }
 
     // todo not sure about naming there
     pub(crate) fn apply<F: Fn(&TLabel) -> TLabel>(&mut self, mapping: F) {
         match self {
-            Uncond(t) => {
-                *self = Uncond(mapping(t));
+            Self::Uncond(t) => {
+                *self = Self::Uncond(mapping(t));
             }
-            Cond(t, f) => {
-                *self = Cond(mapping(t), mapping(f));
+            Self::Cond(t, f) => {
+                *self = Self::Cond(mapping(t), mapping(f));
             }
-            Terminal => {}
+            Self::Switch(v) => {
+                for (_, x) in v {
+                    *x = mapping(x)
+                }
+            }
+            Self::Terminal => {}
         }
     }
 
     pub(crate) fn map<'a, U, F: Fn(&'a TLabel) -> U>(&'a self, mapping: F) -> CfgEdge<U> {
         match self {
-            Uncond(t) => Uncond(mapping(t)),
-            Cond(t, f) => Cond(mapping(t), mapping(f)),
-            Terminal => Terminal,
+            Self::Uncond(t) => Uncond(mapping(t)),
+            Self::Cond(t, f) => Cond(mapping(t), mapping(f)),
+            Self::Switch(v) => Switch(v.iter().map(|(u, x)| (*u, mapping(x))).collect()),
+            Self::Terminal => Terminal,
         }
     }
 }
@@ -81,22 +98,38 @@ impl<T> Iterator for CfgEdgeIter<T> {
 impl<T> IntoIterator for CfgEdge<T> {
     type Item = T;
 
-    type IntoIter = CfgEdgeIter<T>;
+    // TODO temporary unused, fixme!
+    // type IntoIter = CfgEdgeIter<T>;
+
+    // fn into_iter(self) -> Self::IntoIter {
+    //     match self {
+    // Self::Uncond(u) => CfgEdgeIter {
+    //     inner: [Some(u), None],
+    //     index: 0,
+    // },
+    // Self::Cond(cond, fallthrough) => CfgEdgeIter {
+    //     inner: [Some(cond), Some(fallthrough)],
+    //     index: 0,
+    // },
+    // Self::Terminal => CfgEdgeIter {
+    //     inner: [None, None],
+    //     index: 0,
+    // },
+    //     }
+    // }
+
+    type IntoIter = std::vec::IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
         match self {
-            Self::Uncond(u) => CfgEdgeIter {
-                inner: [Some(u), None],
-                index: 0,
-            },
-            Self::Cond(cond, fallthrough) => CfgEdgeIter {
-                inner: [Some(cond), Some(fallthrough)],
-                index: 0,
-            },
-            Self::Terminal => CfgEdgeIter {
-                inner: [None, None],
-                index: 0,
-            },
+            Self::Uncond(u) => vec![u].into_iter(),
+            Self::Cond(cond, fallthrough) => vec![cond, fallthrough].into_iter(),
+            Self::Switch(x) => x
+                .into_iter()
+                .map(|(_, x)| x)
+                .collect::<Vec<T>>()
+                .into_iter(),
+            Self::Terminal => vec![].into_iter(),
         }
     }
 }

@@ -10,6 +10,7 @@ mod decode;
 mod encode;
 mod error;
 mod format;
+mod gas_cost;
 mod solidity;
 
 use clap::Parser;

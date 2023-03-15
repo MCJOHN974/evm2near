@@ -24,6 +24,7 @@ use crate::{
     analyze::{basic_cfg, BasicCfg, CfgNode, Idx, Offs},
     config::CompilerConfig,
     encode::encode_push,
+    gas_cost::*,
 };
 
 const TABLE_OFFSET: i32 = 0x1000;
@@ -117,9 +118,9 @@ struct Compiler {
     evm_exec_function: FunctionIndex,      // _evm_exec
     evm_post_exec_function: FunctionIndex, // _evm_post_exec
     evm_pop_function: FunctionIndex,       // _evm_pop_u32
-    // evm_push_function: FunctionIndex,      // _evm_push_u32
-    evm_burn_gas: FunctionIndex,    // _evm_burn_gas
-    evm_pc_function: FunctionIndex, // _evm_set_pc
+    evm_push_function: FunctionIndex,      // _evm_push_u32
+    evm_burn_gas: FunctionIndex,           // _evm_burn_gas
+    evm_pc_function: FunctionIndex,        // _evm_set_pc
     function_import_count: usize,
     builder: ModuleBuilder,
 }
@@ -139,7 +140,7 @@ impl Compiler {
                 .unwrap(),
             evm_exec_function: 0, // filled in during compile_cfg()
             evm_pop_function: find_runtime_function(&runtime_library, "_evm_pop_u32").unwrap(),
-            // evm_push_function: find_runtime_function(&runtime_library, "_evm_push_u32").unwrap(),
+            evm_push_function: find_runtime_function(&runtime_library, "_evm_push_u32").unwrap(),
             evm_burn_gas: find_runtime_function(&runtime_library, "_evm_burn_gas").unwrap(),
             evm_pc_function: find_runtime_function(&runtime_library, "_evm_set_pc").unwrap(),
             function_import_count: runtime_library.import_count(ImportCountType::Function),
@@ -304,42 +305,48 @@ impl Compiler {
                             let block_len = orig_label.code_end.0 - orig_label.code_start.0;
                             let mut curr_idx = 0;
                             let mut evm_offset: usize = 0;
+
+                            let block_gas_burnt = block_code
+                                .iter()
+                                .map(|op| i32::try_from(static_gas_cost(op)).unwrap())
+                                .sum();
+
+                            res.extend(vec![
+                                Instruction::I32Const(block_gas_burnt),
+                                Instruction::Call(self.evm_burn_gas), // todo add spend gas check
+                            ]);
+
+                            if self.config.program_counter {
+                                let pc = orig_label.label.0;
+                                res.extend(vec![
+                                    Instruction::I32Const(pc.try_into().unwrap()),
+                                    Instruction::Call(self.evm_pc_function),
+                                ]);
+                            }
+
                             while curr_idx < block_len {
                                 match &block_code[curr_idx..] {
                                     [p, j, ..] if p.is_push() && j.is_jump() => {
-                                        // this is static jump, already accounted during cfg analysis. we only need to burn gas there
-                                        let jump_gas = if j == &Opcode::JUMP { 8 } else { 10 };
-                                        res.extend(vec![
-                                            Instruction::I32Const(3),             // any push costs 3 gas
-                                            Instruction::Call(self.evm_burn_gas), // burn it
-                                            Instruction::I32Const(jump_gas),
-                                            Instruction::Call(self.evm_burn_gas),
-                                        ]);
+                                        // static jump
                                         curr_idx += 2;
                                         evm_offset += p.size() + j.size();
                                     }
                                     [j, ..] if j.is_jump() => {
-                                        // this is dynamic jump
-                                        let jump_gas = if j == &Opcode::JUMP { 8 } else { 10 };
-                                        res.extend(vec![
-                                            Instruction::I32Const(jump_gas),
-                                            Instruction::Call(self.evm_burn_gas),
-                                        ]);
+                                        // dynamic jump
                                         curr_idx += 1;
                                         evm_offset += j.size();
+                                    }
+                                    [_pc @ Opcode::PC, ..] => {
+                                        res.push(Instruction::I32Const(
+                                            i32::try_from(evm_offset).unwrap(),
+                                        ));
+                                        res.push(Instruction::Call(self.evm_push_function));
                                     }
                                     [op, ..] => {
                                         wasm_idx2evm_idx.insert(
                                             Idx(res.len()),
                                             Idx(curr_idx + orig_label.code_start.0),
                                         );
-                                        if self.config.program_counter {
-                                            let pc = orig_label.label.0 + evm_offset;
-                                            res.extend(vec![
-                                                Instruction::I32Const(pc.try_into().unwrap()),
-                                                Instruction::Call(self.evm_pc_function),
-                                            ]);
-                                        }
                                         if op.is_push() {
                                             let operands = encode_push(op);
                                             res.extend(operands);

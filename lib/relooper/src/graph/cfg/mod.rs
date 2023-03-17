@@ -1,6 +1,6 @@
 use crate::graph::cfg::CfgEdge::{Cond, Switch, Terminal, Uncond};
 use crate::traversal::graph::bfs::Bfs;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -19,34 +19,31 @@ pub enum CfgEdge<TLabel> {
 }
 
 impl<TLabel> CfgEdge<TLabel> {
-    // TODO temporary stabbed with vec iterator FIXME
-    // pub fn iter(&self) -> CfgEdgeIter<&TLabel> {
-    //     match self {
-    //         Self::Uncond(u) => CfgEdgeIter {
-    //             inner: [Some(u), None],
-    //             index: 0,
-    //         },
-    //         Self::Cond(cond, fallthrough) => CfgEdgeIter {
-    //             inner: [Some(cond), Some(fallthrough)],
-    //             index: 0,
-    //         },
-    //         Self::Terminal => CfgEdgeIter {
-    //             inner: [None, None],
-    //             index: 0,
-    //         },
-    //     }
-    // }
-
-    pub fn iter(&self) -> std::vec::IntoIter<&TLabel> {
+    pub fn iter(&self) -> CfgEdgeIter<&TLabel> {
         match self {
-            Self::Uncond(u) => vec![u].into_iter(),
-            Self::Cond(cond, fallthrough) => vec![cond, fallthrough].into_iter(),
-            Self::Switch(v) => v.iter().map(|(_, x)| x).collect::<Vec<_>>().into_iter(),
-            Self::Terminal => vec![].into_iter(),
+            Uncond(u) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
+                inner: [Some(u), None],
+                index: 0,
+            }),
+            Cond(cond, fallthrough) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
+                inner: [Some(cond), Some(fallthrough)],
+                index: 0,
+            }),
+            Switch(v) => {
+                if v.len() <= 2 {
+                    let inner = [v.get(0).map(|(_, l)| l), v.get(1).map(|(_, l)| l)];
+                    CfgEdgeIter::Fixed(CfgEdgeFixedIter { inner, index: 0 })
+                } else {
+                    CfgEdgeIter::Flexible(v.iter().map(|(_, l)| l).collect())
+                }
+            }
+            Terminal => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
+                inner: [None, None],
+                index: 0,
+            }),
         }
     }
 
-    // todo not sure about naming there
     pub(crate) fn apply<F: Fn(&TLabel) -> TLabel>(&mut self, mapping: F) {
         match self {
             Self::Uncond(t) => {
@@ -74,62 +71,66 @@ impl<TLabel> CfgEdge<TLabel> {
     }
 }
 
-/// A struct which enables iterating over the nodes that make up a `CfgEdge`.
-/// Internally it stores the data as a 2-array as opposed to a `Vec` to avoid heap allocation.
+/// A enum which enables iterating over the nodes that make up a `CfgEdge`.
+/// Internally it stores the data as a 2-array for fixed-size edges as opposed to a `Vec` to avoid heap allocation.
+/// In case of `Switch` variant, `VecDeque` is used if there is more than 2 children.
 #[derive(Debug, Clone, Copy)]
-pub struct CfgEdgeIter<T> {
+pub struct CfgEdgeFixedIter<T> {
     inner: [Option<T>; 2],
     index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum CfgEdgeIter<T> {
+    Fixed(CfgEdgeFixedIter<T>),
+    Flexible(VecDeque<T>),
 }
 
 impl<T> Iterator for CfgEdgeIter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= 2 {
-            return None;
+        match self {
+            Self::Fixed(fixed) => {
+                if fixed.index >= 2 {
+                    return None;
+                }
+                let result = fixed.inner[fixed.index].take();
+                fixed.index += 1;
+                result
+            }
+            Self::Flexible(deque) => deque.pop_front(),
         }
-        let result = self.inner[self.index].take();
-        self.index += 1;
-        result
     }
 }
 
-impl<T> IntoIterator for CfgEdge<T> {
+impl<T: Copy> IntoIterator for CfgEdge<T> {
     type Item = T;
 
-    // TODO temporary unused, fixme!
-    // type IntoIter = CfgEdgeIter<T>;
-
-    // fn into_iter(self) -> Self::IntoIter {
-    //     match self {
-    // Self::Uncond(u) => CfgEdgeIter {
-    //     inner: [Some(u), None],
-    //     index: 0,
-    // },
-    // Self::Cond(cond, fallthrough) => CfgEdgeIter {
-    //     inner: [Some(cond), Some(fallthrough)],
-    //     index: 0,
-    // },
-    // Self::Terminal => CfgEdgeIter {
-    //     inner: [None, None],
-    //     index: 0,
-    // },
-    //     }
-    // }
-
-    type IntoIter = std::vec::IntoIter<T>;
+    type IntoIter = CfgEdgeIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
         match self {
-            Self::Uncond(u) => vec![u].into_iter(),
-            Self::Cond(cond, fallthrough) => vec![cond, fallthrough].into_iter(),
-            Self::Switch(x) => x
-                .into_iter()
-                .map(|(_, x)| x)
-                .collect::<Vec<T>>()
-                .into_iter(),
-            Self::Terminal => vec![].into_iter(),
+            Uncond(u) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
+                inner: [Some(u), None],
+                index: 0,
+            }),
+            Cond(cond, fallthrough) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
+                inner: [Some(cond), Some(fallthrough)],
+                index: 0,
+            }),
+            Switch(v) => {
+                if v.len() <= 2 {
+                    let inner = [v.get(0).map(|&(_, l)| l), v.get(1).map(|&(_, l)| l)];
+                    CfgEdgeIter::Fixed(CfgEdgeFixedIter { inner, index: 0 })
+                } else {
+                    CfgEdgeIter::Flexible(v.into_iter().map(|(_, l)| l).collect())
+                }
+            }
+            Terminal => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
+                inner: [None, None],
+                index: 0,
+            }),
         }
     }
 }

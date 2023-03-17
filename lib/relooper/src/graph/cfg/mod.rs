@@ -1,6 +1,6 @@
 use crate::graph::cfg::CfgEdge::{Cond, Switch, Terminal, Uncond};
 use crate::traversal::graph::bfs::Bfs;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -19,28 +19,28 @@ pub enum CfgEdge<TLabel> {
 }
 
 impl<TLabel> CfgEdge<TLabel> {
-    pub fn iter(&self) -> CfgEdgeIter<&TLabel> {
+    pub fn iter(&self) -> CfgEdgeIter<TLabel> {
         match self {
-            Uncond(u) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
-                inner: [Some(u), None],
+            Uncond(u) => CfgEdgeIter {
+                fixed: [Some(u), None],
+                allocated: [].iter(),
                 index: 0,
-            }),
-            Cond(cond, fallthrough) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
-                inner: [Some(cond), Some(fallthrough)],
+            },
+            Cond(cond, fallthrough) => CfgEdgeIter {
+                fixed: [Some(cond), Some(fallthrough)],
+                allocated: [].iter(),
                 index: 0,
-            }),
-            Switch(v) => {
-                if v.len() <= 2 {
-                    let inner = [v.get(0).map(|(_, l)| l), v.get(1).map(|(_, l)| l)];
-                    CfgEdgeIter::Fixed(CfgEdgeFixedIter { inner, index: 0 })
-                } else {
-                    CfgEdgeIter::Flexible(v.iter().map(|(_, l)| l).collect())
-                }
-            }
-            Terminal => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
-                inner: [None, None],
+            },
+            Switch(v) => CfgEdgeIter {
+                fixed: [None, None],
+                allocated: v.iter(),
+                index: 2,
+            },
+            Terminal => CfgEdgeIter {
+                fixed: [None, None],
+                allocated: [].iter(),
                 index: 0,
-            }),
+            },
         }
     }
 
@@ -71,67 +71,28 @@ impl<TLabel> CfgEdge<TLabel> {
     }
 }
 
-/// A enum which enables iterating over the nodes that make up a `CfgEdge`.
-/// Internally it stores the data as a 2-array for fixed-size edges as opposed to a `Vec` to avoid heap allocation.
-/// In case of `Switch` variant, `VecDeque` is used if there is more than 2 children.
-#[derive(Debug, Clone, Copy)]
-pub struct CfgEdgeFixedIter<T> {
-    inner: [Option<T>; 2],
+/// A struct which enables iterating over the nodes that make up a `CfgEdge`.
+/// Internally it stores the data as a 2-array as opposed to a `Vec` to avoid heap allocation.
+/// For the case of the `CfgEdge::Switch` variant an iterator over the contained `Vec` is
+/// used directly.
+#[derive(Debug, Clone)]
+pub struct CfgEdgeIter<'a, T> {
+    fixed: [Option<&'a T>; 2],
+    allocated: std::slice::Iter<'a, (usize, T)>,
     index: usize,
 }
 
-#[derive(Debug, Clone)]
-pub enum CfgEdgeIter<T> {
-    Fixed(CfgEdgeFixedIter<T>),
-    Flexible(VecDeque<T>),
-}
-
-impl<T> Iterator for CfgEdgeIter<T> {
-    type Item = T;
+impl<'a, T> Iterator for CfgEdgeIter<'a, T> {
+    type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Fixed(fixed) => {
-                if fixed.index >= 2 {
-                    return None;
-                }
-                let result = fixed.inner[fixed.index].take();
-                fixed.index += 1;
-                result
-            }
-            Self::Flexible(deque) => deque.pop_front(),
+        if self.index < 2 {
+            let item = self.fixed[self.index].take();
+            self.index += 1;
+            return item;
         }
-    }
-}
 
-impl<T: Copy> IntoIterator for CfgEdge<T> {
-    type Item = T;
-
-    type IntoIter = CfgEdgeIter<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            Uncond(u) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
-                inner: [Some(u), None],
-                index: 0,
-            }),
-            Cond(cond, fallthrough) => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
-                inner: [Some(cond), Some(fallthrough)],
-                index: 0,
-            }),
-            Switch(v) => {
-                if v.len() <= 2 {
-                    let inner = [v.get(0).map(|&(_, l)| l), v.get(1).map(|&(_, l)| l)];
-                    CfgEdgeIter::Fixed(CfgEdgeFixedIter { inner, index: 0 })
-                } else {
-                    CfgEdgeIter::Flexible(v.into_iter().map(|(_, l)| l).collect())
-                }
-            }
-            Terminal => CfgEdgeIter::Fixed(CfgEdgeFixedIter {
-                inner: [None, None],
-                index: 0,
-            }),
-        }
+        self.allocated.next().map(|(_, x)| x)
     }
 }
 
@@ -288,15 +249,13 @@ mod tests {
         test_cfg_edge_iter_inner(Vec::new());
         test_cfg_edge_iter_inner(vec![7]);
         test_cfg_edge_iter_inner(vec![123, 456]);
+        test_cfg_edge_iter_inner(vec![123, 456, 789]);
     }
 
     fn test_cfg_edge_iter_inner(input: Vec<usize>) {
         let edge = cfg_edge_from_slice(&input);
 
         let reconstructed: Vec<usize> = edge.iter().copied().collect();
-        assert_eq!(input, reconstructed);
-
-        let reconstructed: Vec<usize> = edge.into_iter().collect();
         assert_eq!(input, reconstructed);
     }
 
@@ -305,7 +264,7 @@ mod tests {
             [] => CfgEdge::Terminal,
             [x] => CfgEdge::Uncond(*x),
             [x, y] => CfgEdge::Cond(*x, *y),
-            _ => panic!("cfg_edge_from_slice: Slice must have two or fewer values!"),
+            longer => CfgEdge::Switch(longer.iter().map(|x| (0, *x)).collect()),
         }
     }
 }

@@ -49,6 +49,8 @@ pub struct NodeInfo {
     pub is_dynamic: bool,
 }
 
+/// Represents either original node or artificial `Dynamic` node used for dynamic edges translation.
+/// During codegen phase, all dynamic node edges will be converted to table branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CfgNode<T> {
     Orig(T),

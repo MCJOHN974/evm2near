@@ -173,7 +173,7 @@ impl<TLabel: CfgLabel + Display> ReSeq<TLabel> {
                         res.push(format!("r{current_id}[label=\"Br {current_id}\"];"));
 
                         let branch_to = back_branches
-                            .get(back_branches.len() - 1 - jmp)
+                            .get(back_branches.len() - 1 - (*jmp as usize))
                             .expect("unexpected branch");
                         res.push(format!(
                             "r{current_id} -> r{branch_to}[constraint=false,color=\"blue\"]"

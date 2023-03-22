@@ -11,6 +11,7 @@ mod encode;
 mod error;
 mod format;
 mod solidity;
+mod wasm_translate;
 
 use clap::Parser;
 use parity_wasm::elements::Serialize;
@@ -173,11 +174,16 @@ fn main() -> impl std::process::Termination {
 
     let runtime_wasm = include_bytes!("../../../evmlib.wasm");
     let runtime_wasi = include_bytes!("../../../evmlib.wasi");
-    let runtime_library = parity_wasm::deserialize_buffer(match options.abi {
-        OutputABI::Near => runtime_wasm,
-        OutputABI::Wasi => runtime_wasi,
-    })
-    .unwrap();
+    let current_runtime = match options.abi {
+        OutputABI::Near => runtime_wasm.to_vec(),
+        OutputABI::Wasi => runtime_wasi.to_vec(),
+    };
+    // let r_lib_parsed = wasmparser::Parser::new(0)
+    //     .parse_all(current_runtime.as_slice())
+    //     .map(|p| p.unwrap())
+    //     .collect::<Vec<_>>();
+    // let r_lib = wasm_translate::ty(t, ty)
+    let runtime_library = parity_wasm::deserialize_buffer(current_runtime.as_slice()).unwrap();
 
     let output_program = compile(
         &input_program,

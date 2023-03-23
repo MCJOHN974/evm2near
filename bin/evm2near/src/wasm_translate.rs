@@ -4,6 +4,153 @@ use anyhow::{Error, Result};
 use wasm_encoder::*;
 use wasmparser::{DataKind, ElementKind, FunctionBody, Global, Operator, Type};
 
+pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
+    let parsed = wasmparser::Parser::new(0)
+        .parse_all(wasm.as_slice())
+        .map(|p| p.unwrap())
+        .collect::<Vec<_>>();
+
+    let mut t = DefaultTranslator;
+
+    let mut code_section_size: Option<u32> = None;
+    let mut code_section = wasm_encoder::CodeSection::new();
+
+    let mut m = wasm_encoder::Module::new();
+    for p in parsed {
+        match p {
+            wasmparser::Payload::Version {
+                num: _version,
+                encoding,
+                range: _range,
+            } => {
+                assert_eq!(encoding, wasmparser::Encoding::Module);
+            }
+            wasmparser::Payload::TypeSection(type_section) => {
+                let mut type_sect = wasm_encoder::TypeSection::new();
+                for typ in type_section {
+                    t.translate_type_def(typ?, &mut type_sect)?;
+                }
+                m.section(&type_sect);
+            }
+            wasmparser::Payload::ImportSection(import_section) => {
+                let mut import_sect = wasm_encoder::ImportSection::new();
+                for import in import_section {
+                    let import = import?;
+                    let typ = t.translate_type_ref(import.ty)?;
+                    import_sect.import(import.module, import.name, typ);
+                }
+                m.section(&import_sect);
+            }
+            wasmparser::Payload::FunctionSection(function_section) => {
+                let mut function_sect = wasm_encoder::FunctionSection::new();
+                for function in function_section {
+                    function_sect.function(function?);
+                }
+                m.section(&function_sect);
+            }
+            wasmparser::Payload::TableSection(table_section) => {
+                let mut table_sect = wasm_encoder::TableSection::new();
+                for table in table_section {
+                    let table = table?;
+                    let table_type = table_type(&mut t, &table.ty)?; // todo TableInit is not used!
+                    table_sect.table(table_type);
+                }
+                m.section(&table_sect);
+            }
+            wasmparser::Payload::MemorySection(memory_section) => {
+                let mut memory_sect = wasm_encoder::MemorySection::new();
+                for mem in memory_section {
+                    let mem = mem?;
+                    let memory_type = t.translate_memory_type(&mem)?;
+                    memory_sect.memory(memory_type);
+                }
+                m.section(&memory_sect);
+            }
+            wasmparser::Payload::TagSection(tag_section) => {
+                let mut tag_sect = wasm_encoder::TagSection::new();
+                for tag in tag_section {
+                    let tag = tag?;
+                    let tag_type = t.translate_tag_type(&tag)?;
+                    tag_sect.tag(tag_type);
+                }
+                m.section(&tag_sect);
+            }
+            wasmparser::Payload::GlobalSection(global_section) => {
+                let mut glob_sect = wasm_encoder::GlobalSection::new();
+                for glob in global_section {
+                    t.translate_global(glob?, &mut glob_sect)?;
+                }
+                m.section(&glob_sect);
+            }
+            wasmparser::Payload::ExportSection(export_section) => {
+                let mut export_sect = wasm_encoder::ExportSection::new();
+                for export in export_section {
+                    let export = export?;
+                    export_sect.export(export.name, ext_kind(export.kind), export.index);
+                }
+                m.section(&export_sect);
+            }
+            wasmparser::Payload::StartSection {
+                func: function_index,
+                range: _range,
+            } => {
+                let start_sect = wasm_encoder::StartSection { function_index };
+                m.section(&start_sect);
+            }
+            wasmparser::Payload::ElementSection(element_section) => {
+                let mut element_sect = wasm_encoder::ElementSection::new();
+                for element in element_section {
+                    t.translate_element(element?, &mut element_sect)?;
+                }
+                m.section(&element_sect);
+            }
+            wasmparser::Payload::DataCountSection { count, range } => {
+                let data_count_sect = wasm_encoder::DataCountSection { count };
+                m.section(&data_count_sect);
+            }
+            wasmparser::Payload::DataSection(data_section) => {
+                let mut data_sect = wasm_encoder::DataSection::new();
+                for data in data_section {
+                    t.translate_data(data?, &mut data_sect)?;
+                }
+                m.section(&data_sect);
+            }
+            wasmparser::Payload::CodeSectionStart { count, range, size } => {
+                code_section_size = Some(count);
+            }
+            wasmparser::Payload::CodeSectionEntry(code_section_entry) => {
+                assert!(code_section_size.is_some());
+                t.translate_code(code_section_entry, &mut code_section)?;
+                let desired_size = code_section_size.unwrap();
+                if code_section.len() == desired_size {
+                    m.section(&code_section);
+                    code_section_size = None;
+                }
+            }
+            wasmparser::Payload::ModuleSection { parser, range } => todo!(),
+            wasmparser::Payload::InstanceSection(_) => todo!(),
+            wasmparser::Payload::CoreTypeSection(_) => todo!(),
+            wasmparser::Payload::ComponentSection { parser, range } => todo!(),
+            wasmparser::Payload::ComponentInstanceSection(_) => todo!(),
+            wasmparser::Payload::ComponentAliasSection(_) => todo!(),
+            wasmparser::Payload::ComponentTypeSection(_) => todo!(),
+            wasmparser::Payload::ComponentCanonicalSection(_) => todo!(),
+            wasmparser::Payload::ComponentStartSection { start, range } => todo!(),
+            wasmparser::Payload::ComponentImportSection(_) => todo!(),
+            wasmparser::Payload::ComponentExportSection(_) => todo!(),
+            wasmparser::Payload::CustomSection(_) => todo!(),
+            wasmparser::Payload::UnknownSection {
+                id,
+                contents,
+                range,
+            } => todo!(),
+            wasmparser::Payload::End(end) => {}
+        }
+    }
+
+    Ok(m)
+}
+
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub enum Item {
     Function,
@@ -27,6 +174,34 @@ pub enum ConstExprKind {
 
 pub trait Translator {
     fn as_obj(&mut self) -> &mut dyn Translator;
+
+    fn translate_type_ref(
+        &mut self,
+        type_ref: wasmparser::TypeRef,
+    ) -> Result<wasm_encoder::EntityType> {
+        match type_ref {
+            wasmparser::TypeRef::Func(f) => Ok(EntityType::Function(f)),
+            wasmparser::TypeRef::Table(t) => {
+                let element_type = self.translate_refty(&t.element_type)?;
+                Ok(EntityType::Table(TableType {
+                    element_type,
+                    minimum: t.initial,
+                    maximum: t.maximum,
+                }))
+            }
+            wasmparser::TypeRef::Memory(m) => Ok(EntityType::Memory(MemoryType {
+                memory64: m.memory64,
+                minimum: m.initial,
+                maximum: m.maximum,
+                shared: m.shared,
+            })),
+            wasmparser::TypeRef::Global(g) => Ok(EntityType::Global(GlobalType {
+                val_type: self.translate_ty(&g.content_type)?,
+                mutable: g.mutable,
+            })),
+            wasmparser::TypeRef::Tag(t) => Ok(EntityType::Tag(self.translate_tag_type(&t)?)),
+        }
+    }
 
     fn translate_type_def(&mut self, ty: Type, s: &mut TypeSection) -> Result<()> {
         type_def(self.as_obj(), ty, s)
@@ -139,6 +314,16 @@ pub fn type_def(t: &mut dyn Translator, ty: Type, s: &mut TypeSection) -> Result
             );
             Ok(())
         }
+    }
+}
+
+pub fn ext_kind(ekind: wasmparser::ExternalKind) -> ExportKind {
+    match ekind {
+        wasmparser::ExternalKind::Func => ExportKind::Func,
+        wasmparser::ExternalKind::Table => ExportKind::Table,
+        wasmparser::ExternalKind::Memory => ExportKind::Memory,
+        wasmparser::ExternalKind::Global => ExportKind::Global,
+        wasmparser::ExternalKind::Tag => ExportKind::Tag,
     }
 }
 

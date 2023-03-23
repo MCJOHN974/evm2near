@@ -178,11 +178,9 @@ fn main() -> impl std::process::Termination {
         OutputABI::Near => runtime_wasm.to_vec(),
         OutputABI::Wasi => runtime_wasi.to_vec(),
     };
-    // let r_lib_parsed = wasmparser::Parser::new(0)
-    //     .parse_all(current_runtime.as_slice())
-    //     .map(|p| p.unwrap())
-    //     .collect::<Vec<_>>();
-    // let r_lib = wasm_translate::ty(t, ty)
+
+    let r_lib = wasm_translate::parse(current_runtime.clone()).unwrap();
+
     let runtime_library = parity_wasm::deserialize_buffer(current_runtime.as_slice()).unwrap();
 
     let output_program = compile(

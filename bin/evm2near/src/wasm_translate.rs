@@ -10,7 +10,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
         .map(|p| p.unwrap())
         .collect::<Vec<_>>();
 
-    let mut t = DefaultTranslator;
+    let mut t = Translator;
 
     let mut code_section_size: Option<u32> = None;
     let mut code_section = wasm_encoder::CodeSection::new();
@@ -28,7 +28,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             wasmparser::Payload::TypeSection(type_section) => {
                 let mut type_sect = wasm_encoder::TypeSection::new();
                 for typ in type_section {
-                    t.translate_type_def(typ?, &mut type_sect)?;
+                    t.type_def(typ?, &mut type_sect)?;
                 }
                 m.section(&type_sect);
             }
@@ -36,7 +36,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
                 let mut import_sect = wasm_encoder::ImportSection::new();
                 for import in import_section {
                     let import = import?;
-                    let typ = t.translate_type_ref(import.ty)?;
+                    let typ = t.type_ref(import.ty)?;
                     import_sect.import(import.module, import.name, typ);
                 }
                 m.section(&import_sect);
@@ -52,7 +52,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
                 let mut table_sect = wasm_encoder::TableSection::new();
                 for table in table_section {
                     let table = table?;
-                    let table_type = table_type(&mut t, &table.ty)?; // todo TableInit is not used!
+                    let table_type = t.table_type(&table.ty)?; // todo TableInit is not used!
                     table_sect.table(table_type);
                 }
                 m.section(&table_sect);
@@ -61,7 +61,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
                 let mut memory_sect = wasm_encoder::MemorySection::new();
                 for mem in memory_section {
                     let mem = mem?;
-                    let memory_type = t.translate_memory_type(&mem)?;
+                    let memory_type = t.memory_type(&mem)?;
                     memory_sect.memory(memory_type);
                 }
                 m.section(&memory_sect);
@@ -70,7 +70,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
                 let mut tag_sect = wasm_encoder::TagSection::new();
                 for tag in tag_section {
                     let tag = tag?;
-                    let tag_type = t.translate_tag_type(&tag)?;
+                    let tag_type = t.tag_type(&tag)?;
                     tag_sect.tag(tag_type);
                 }
                 m.section(&tag_sect);
@@ -78,7 +78,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             wasmparser::Payload::GlobalSection(global_section) => {
                 let mut glob_sect = wasm_encoder::GlobalSection::new();
                 for glob in global_section {
-                    t.translate_global(glob?, &mut glob_sect)?;
+                    t.global(glob?, &mut glob_sect)?;
                 }
                 m.section(&glob_sect);
             }
@@ -86,7 +86,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
                 let mut export_sect = wasm_encoder::ExportSection::new();
                 for export in export_section {
                     let export = export?;
-                    export_sect.export(export.name, ext_kind(export.kind), export.index);
+                    export_sect.export(export.name, t.ext_kind(export.kind), export.index);
                 }
                 m.section(&export_sect);
             }
@@ -100,67 +100,65 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             wasmparser::Payload::ElementSection(element_section) => {
                 let mut element_sect = wasm_encoder::ElementSection::new();
                 for element in element_section {
-                    t.translate_element(element?, &mut element_sect)?;
+                    t.element(element?, &mut element_sect)?;
                 }
                 m.section(&element_sect);
             }
-            wasmparser::Payload::DataCountSection { count, range } => {
+            wasmparser::Payload::DataCountSection { count, range: _ } => {
                 let data_count_sect = wasm_encoder::DataCountSection { count };
                 m.section(&data_count_sect);
             }
             wasmparser::Payload::DataSection(data_section) => {
                 let mut data_sect = wasm_encoder::DataSection::new();
                 for data in data_section {
-                    t.translate_data(data?, &mut data_sect)?;
+                    t.data(data?, &mut data_sect)?;
                 }
                 m.section(&data_sect);
             }
-            wasmparser::Payload::CodeSectionStart { count, range, size } => {
+            wasmparser::Payload::CodeSectionStart {
+                count,
+                range: _,
+                size: _,
+            } => {
                 code_section_size = Some(count);
             }
             wasmparser::Payload::CodeSectionEntry(code_section_entry) => {
                 assert!(code_section_size.is_some());
-                t.translate_code(code_section_entry, &mut code_section)?;
+                t.code(code_section_entry, &mut code_section)?;
                 let desired_size = code_section_size.unwrap();
                 if code_section.len() == desired_size {
                     m.section(&code_section);
                     code_section_size = None;
                 }
             }
-            wasmparser::Payload::ModuleSection { parser, range } => todo!(),
+            wasmparser::Payload::ModuleSection {
+                parser: _,
+                range: _,
+            } => todo!(),
             wasmparser::Payload::InstanceSection(_) => todo!(),
             wasmparser::Payload::CoreTypeSection(_) => todo!(),
-            wasmparser::Payload::ComponentSection { parser, range } => todo!(),
+            wasmparser::Payload::ComponentSection {
+                parser: _,
+                range: _,
+            } => todo!(),
             wasmparser::Payload::ComponentInstanceSection(_) => todo!(),
             wasmparser::Payload::ComponentAliasSection(_) => todo!(),
             wasmparser::Payload::ComponentTypeSection(_) => todo!(),
             wasmparser::Payload::ComponentCanonicalSection(_) => todo!(),
-            wasmparser::Payload::ComponentStartSection { start, range } => todo!(),
+            wasmparser::Payload::ComponentStartSection { start: _, range: _ } => todo!(),
             wasmparser::Payload::ComponentImportSection(_) => todo!(),
             wasmparser::Payload::ComponentExportSection(_) => todo!(),
             wasmparser::Payload::CustomSection(_) => todo!(),
             wasmparser::Payload::UnknownSection {
-                id,
-                contents,
-                range,
+                id: _,
+                contents: _,
+                range: _,
             } => todo!(),
-            wasmparser::Payload::End(end) => {}
+            wasmparser::Payload::End(_end) => {}
         }
     }
 
     Ok(m)
-}
-
-#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
-pub enum Item {
-    Function,
-    Table,
-    Memory,
-    Tag,
-    Global,
-    Type,
-    Data,
-    Element,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
@@ -172,17 +170,14 @@ pub enum ConstExprKind {
     TableInit,
 }
 
-pub trait Translator {
-    fn as_obj(&mut self) -> &mut dyn Translator;
+pub struct Translator;
 
-    fn translate_type_ref(
-        &mut self,
-        type_ref: wasmparser::TypeRef,
-    ) -> Result<wasm_encoder::EntityType> {
+impl Translator {
+    fn type_ref(&mut self, type_ref: wasmparser::TypeRef) -> Result<wasm_encoder::EntityType> {
         match type_ref {
             wasmparser::TypeRef::Func(f) => Ok(EntityType::Function(f)),
             wasmparser::TypeRef::Table(t) => {
-                let element_type = self.translate_refty(&t.element_type)?;
+                let element_type = self.refty(&t.element_type)?;
                 Ok(EntityType::Table(TableType {
                     element_type,
                     minimum: t.initial,
@@ -196,442 +191,315 @@ pub trait Translator {
                 shared: m.shared,
             })),
             wasmparser::TypeRef::Global(g) => Ok(EntityType::Global(GlobalType {
-                val_type: self.translate_ty(&g.content_type)?,
+                val_type: self.ty(&g.content_type)?,
                 mutable: g.mutable,
             })),
-            wasmparser::TypeRef::Tag(t) => Ok(EntityType::Tag(self.translate_tag_type(&t)?)),
+            wasmparser::TypeRef::Tag(t) => Ok(EntityType::Tag(self.tag_type(&t)?)),
         }
     }
 
-    fn translate_type_def(&mut self, ty: Type, s: &mut TypeSection) -> Result<()> {
-        type_def(self.as_obj(), ty, s)
+    pub fn type_def(&mut self, ty: Type, s: &mut TypeSection) -> Result<()> {
+        match ty {
+            Type::Func(f) => {
+                s.function(
+                    f.params()
+                        .iter()
+                        .map(|ty| self.ty(ty))
+                        .collect::<Result<Vec<_>>>()?,
+                    f.results()
+                        .iter()
+                        .map(|ty| self.ty(ty))
+                        .collect::<Result<Vec<_>>>()?,
+                );
+                Ok(())
+            }
+        }
     }
 
-    fn translate_table_type(
-        &mut self,
-        ty: &wasmparser::TableType,
-    ) -> Result<wasm_encoder::TableType> {
-        table_type(self.as_obj(), ty)
+    pub fn ext_kind(&mut self, ekind: wasmparser::ExternalKind) -> ExportKind {
+        match ekind {
+            wasmparser::ExternalKind::Func => ExportKind::Func,
+            wasmparser::ExternalKind::Table => ExportKind::Table,
+            wasmparser::ExternalKind::Memory => ExportKind::Memory,
+            wasmparser::ExternalKind::Global => ExportKind::Global,
+            wasmparser::ExternalKind::Tag => ExportKind::Tag,
+        }
     }
 
-    fn translate_memory_type(
-        &mut self,
-        ty: &wasmparser::MemoryType,
-    ) -> Result<wasm_encoder::MemoryType> {
-        memory_type(self.as_obj(), ty)
+    pub fn table_type(&mut self, ty: &wasmparser::TableType) -> Result<wasm_encoder::TableType> {
+        Ok(wasm_encoder::TableType {
+            element_type: self.refty(&ty.element_type)?,
+            minimum: ty.initial,
+            maximum: ty.maximum,
+        })
     }
 
-    fn translate_global_type(
-        &mut self,
-        ty: &wasmparser::GlobalType,
-    ) -> Result<wasm_encoder::GlobalType> {
-        global_type(self.as_obj(), ty)
+    pub fn memory_type(&mut self, ty: &wasmparser::MemoryType) -> Result<wasm_encoder::MemoryType> {
+        Ok(wasm_encoder::MemoryType {
+            memory64: ty.memory64,
+            minimum: ty.initial,
+            maximum: ty.maximum,
+            shared: ty.shared,
+        })
     }
 
-    fn translate_tag_type(&mut self, ty: &wasmparser::TagType) -> Result<wasm_encoder::TagType> {
-        tag_type(self.as_obj(), ty)
+    pub fn global_type(&mut self, ty: &wasmparser::GlobalType) -> Result<wasm_encoder::GlobalType> {
+        Ok(wasm_encoder::GlobalType {
+            val_type: self.ty(&ty.content_type)?,
+            mutable: ty.mutable,
+        })
     }
 
-    fn translate_ty(&mut self, t: &wasmparser::ValType) -> Result<ValType> {
-        ty(self.as_obj(), t)
+    pub fn tag_type(&mut self, ty: &wasmparser::TagType) -> Result<wasm_encoder::TagType> {
+        Ok(wasm_encoder::TagType {
+            kind: TagKind::Exception,
+            func_type_idx: ty.func_type_idx,
+        })
     }
 
-    fn translate_refty(&mut self, t: &wasmparser::RefType) -> Result<RefType> {
-        refty(self.as_obj(), t)
+    pub fn ty(&mut self, ty: &wasmparser::ValType) -> Result<ValType> {
+        match ty {
+            wasmparser::ValType::I32 => Ok(ValType::I32),
+            wasmparser::ValType::I64 => Ok(ValType::I64),
+            wasmparser::ValType::F32 => Ok(ValType::F32),
+            wasmparser::ValType::F64 => Ok(ValType::F64),
+            wasmparser::ValType::V128 => Ok(ValType::V128),
+            wasmparser::ValType::Ref(ty) => Ok(ValType::Ref(self.refty(ty)?)),
+        }
     }
 
-    fn translate_heapty(&mut self, t: &wasmparser::HeapType) -> Result<HeapType> {
-        heapty(self.as_obj(), t)
+    pub fn refty(&mut self, ty: &wasmparser::RefType) -> Result<RefType> {
+        Ok(RefType {
+            nullable: ty.nullable,
+            heap_type: self.heapty(&ty.heap_type)?,
+        })
     }
 
-    fn translate_global(&mut self, g: Global, s: &mut GlobalSection) -> Result<()> {
-        global(self.as_obj(), g, s)
+    pub fn heapty(&mut self, ty: &wasmparser::HeapType) -> Result<HeapType> {
+        match ty {
+            wasmparser::HeapType::Func => Ok(HeapType::Func),
+            wasmparser::HeapType::Extern => Ok(HeapType::Extern),
+            wasmparser::HeapType::TypedFunc(i) => Ok(HeapType::TypedFunc((*i).into())),
+        }
     }
 
-    fn translate_const_expr(
+    pub fn global(&mut self, global: Global, s: &mut GlobalSection) -> Result<()> {
+        let ty = self.global_type(&global.ty)?;
+        let insn = self.const_expr(&global.init_expr, ConstExprKind::Global)?;
+        s.global(ty, &insn);
+        Ok(())
+    }
+
+    pub fn const_expr(
         &mut self,
         e: &wasmparser::ConstExpr<'_>,
-        _ty: &wasmparser::ValType,
         ctx: ConstExprKind,
     ) -> Result<wasm_encoder::ConstExpr> {
-        const_expr(self.as_obj(), e, ctx)
-    }
-
-    fn translate_element(
-        &mut self,
-        e: wasmparser::Element<'_>,
-        s: &mut ElementSection,
-    ) -> Result<()> {
-        element(self.as_obj(), e, s)
-    }
-
-    fn translate_data(&mut self, d: wasmparser::Data<'_>, s: &mut DataSection) -> Result<()> {
-        data(self.as_obj(), d, s)
-    }
-
-    fn translate_code(&mut self, body: FunctionBody<'_>, s: &mut CodeSection) -> Result<()> {
-        code(self.as_obj(), body, s)
-    }
-
-    fn translate_op(&mut self, e: &Operator<'_>) -> Result<Instruction<'static>> {
-        op(self.as_obj(), e)
-    }
-
-    fn translate_block_type(&mut self, ty: &wasmparser::BlockType) -> Result<BlockType> {
-        block_type(self.as_obj(), ty)
-    }
-
-    fn translate_memarg(&mut self, arg: &wasmparser::MemArg) -> Result<MemArg> {
-        memarg(self.as_obj(), arg)
-    }
-
-    fn remap(&mut self, item: Item, idx: u32) -> Result<u32> {
-        // drop(item);
-        Ok(idx)
-    }
-}
-
-pub struct DefaultTranslator;
-
-impl Translator for DefaultTranslator {
-    fn as_obj(&mut self) -> &mut dyn Translator {
-        self
-    }
-}
-
-pub fn type_def(t: &mut dyn Translator, ty: Type, s: &mut TypeSection) -> Result<()> {
-    match ty {
-        Type::Func(f) => {
-            s.function(
-                f.params()
-                    .iter()
-                    .map(|ty| t.translate_ty(ty))
-                    .collect::<Result<Vec<_>>>()?,
-                f.results()
-                    .iter()
-                    .map(|ty| t.translate_ty(ty))
-                    .collect::<Result<Vec<_>>>()?,
-            );
-            Ok(())
-        }
-    }
-}
-
-pub fn ext_kind(ekind: wasmparser::ExternalKind) -> ExportKind {
-    match ekind {
-        wasmparser::ExternalKind::Func => ExportKind::Func,
-        wasmparser::ExternalKind::Table => ExportKind::Table,
-        wasmparser::ExternalKind::Memory => ExportKind::Memory,
-        wasmparser::ExternalKind::Global => ExportKind::Global,
-        wasmparser::ExternalKind::Tag => ExportKind::Tag,
-    }
-}
-
-pub fn table_type(
-    t: &mut dyn Translator,
-    ty: &wasmparser::TableType,
-) -> Result<wasm_encoder::TableType> {
-    Ok(wasm_encoder::TableType {
-        element_type: t.translate_refty(&ty.element_type)?,
-        minimum: ty.initial,
-        maximum: ty.maximum,
-    })
-}
-
-pub fn memory_type(
-    _t: &mut dyn Translator,
-    ty: &wasmparser::MemoryType,
-) -> Result<wasm_encoder::MemoryType> {
-    Ok(wasm_encoder::MemoryType {
-        memory64: ty.memory64,
-        minimum: ty.initial,
-        maximum: ty.maximum,
-        shared: ty.shared,
-    })
-}
-
-pub fn global_type(
-    t: &mut dyn Translator,
-    ty: &wasmparser::GlobalType,
-) -> Result<wasm_encoder::GlobalType> {
-    Ok(wasm_encoder::GlobalType {
-        val_type: t.translate_ty(&ty.content_type)?,
-        mutable: ty.mutable,
-    })
-}
-
-pub fn tag_type(t: &mut dyn Translator, ty: &wasmparser::TagType) -> Result<wasm_encoder::TagType> {
-    Ok(wasm_encoder::TagType {
-        kind: TagKind::Exception,
-        func_type_idx: t.remap(Item::Type, ty.func_type_idx)?,
-    })
-}
-
-pub fn ty(t: &mut dyn Translator, ty: &wasmparser::ValType) -> Result<ValType> {
-    match ty {
-        wasmparser::ValType::I32 => Ok(ValType::I32),
-        wasmparser::ValType::I64 => Ok(ValType::I64),
-        wasmparser::ValType::F32 => Ok(ValType::F32),
-        wasmparser::ValType::F64 => Ok(ValType::F64),
-        wasmparser::ValType::V128 => Ok(ValType::V128),
-        wasmparser::ValType::Ref(ty) => Ok(ValType::Ref(t.translate_refty(ty)?)),
-    }
-}
-
-pub fn refty(t: &mut dyn Translator, ty: &wasmparser::RefType) -> Result<RefType> {
-    Ok(RefType {
-        nullable: ty.nullable,
-        heap_type: t.translate_heapty(&ty.heap_type)?,
-    })
-}
-
-pub fn heapty(t: &mut dyn Translator, ty: &wasmparser::HeapType) -> Result<HeapType> {
-    match ty {
-        wasmparser::HeapType::Func => Ok(HeapType::Func),
-        wasmparser::HeapType::Extern => Ok(HeapType::Extern),
-        wasmparser::HeapType::TypedFunc(i) => {
-            Ok(HeapType::TypedFunc(t.remap(Item::Type, (*i).into())?))
-        }
-    }
-}
-
-pub fn global(t: &mut dyn Translator, global: Global, s: &mut GlobalSection) -> Result<()> {
-    let ty = t.translate_global_type(&global.ty)?;
-    let insn = t.translate_const_expr(
-        &global.init_expr,
-        &global.ty.content_type,
-        ConstExprKind::Global,
-    )?;
-    s.global(ty, &insn);
-    Ok(())
-}
-
-pub fn const_expr(
-    t: &mut dyn Translator,
-    e: &wasmparser::ConstExpr<'_>,
-    ctx: ConstExprKind,
-) -> Result<wasm_encoder::ConstExpr> {
-    let mut e = e.get_operators_reader();
-    let mut offset_bytes = Vec::new();
-    let op = e.read()?;
-    if let ConstExprKind::ElementFunction = ctx {
-        match op {
-            Operator::RefFunc { .. }
-            | Operator::RefNull {
-                hty: wasmparser::HeapType::Func,
-                ..
+        let mut e = e.get_operators_reader();
+        let mut offset_bytes = Vec::new();
+        let op = e.read()?;
+        if let ConstExprKind::ElementFunction = ctx {
+            match op {
+                Operator::RefFunc { .. }
+                | Operator::RefNull {
+                    hty: wasmparser::HeapType::Func,
+                    ..
+                }
+                | Operator::GlobalGet { .. } => {}
+                _ => return Err(Error::msg("no mutations applicable")),
             }
-            | Operator::GlobalGet { .. } => {}
+        }
+        self.op(&op)?.encode(&mut offset_bytes);
+        match e.read()? {
+            Operator::End if e.eof() => {}
             _ => return Err(Error::msg("no mutations applicable")),
         }
+        Ok(wasm_encoder::ConstExpr::raw(offset_bytes))
     }
-    t.translate_op(&op)?.encode(&mut offset_bytes);
-    match e.read()? {
-        Operator::End if e.eof() => {}
-        _ => return Err(Error::msg("no mutations applicable")),
-    }
-    Ok(wasm_encoder::ConstExpr::raw(offset_bytes))
-}
 
-pub fn element(
-    t: &mut dyn Translator,
-    element: wasmparser::Element<'_>,
-    s: &mut ElementSection,
-) -> Result<()> {
-    let offset;
-    let mode = match &element.kind {
-        ElementKind::Active {
-            table_index,
-            offset_expr,
-        } => {
-            offset = t.translate_const_expr(
+    pub fn element(
+        &mut self,
+        element: wasmparser::Element<'_>,
+        s: &mut ElementSection,
+    ) -> Result<()> {
+        let offset;
+        let mode = match &element.kind {
+            ElementKind::Active {
+                table_index,
                 offset_expr,
-                &wasmparser::ValType::I32,
-                ConstExprKind::ElementOffset,
-            )?;
-            ElementMode::Active {
-                table: Some(t.remap(Item::Table, *table_index)?),
-                offset: &offset,
+            } => {
+                offset = self.const_expr(offset_expr, ConstExprKind::ElementOffset)?;
+                ElementMode::Active {
+                    table: Some(*table_index),
+                    offset: &offset,
+                }
             }
-        }
-        ElementKind::Passive => ElementMode::Passive,
-        ElementKind::Declared => ElementMode::Declared,
-    };
-    let element_type = t.translate_refty(&element.ty)?;
-    let functions;
-    let exprs;
-    let elements = match element.items {
-        wasmparser::ElementItems::Functions(reader) => {
-            functions = reader
-                .into_iter()
-                .map(|f| t.remap(Item::Function, f?))
-                .collect::<Result<Vec<_>, _>>()?;
-            Elements::Functions(&functions)
-        }
-        wasmparser::ElementItems::Expressions(reader) => {
-            exprs = reader
-                .into_iter()
-                .map(|f| {
-                    t.translate_const_expr(
-                        &f?,
-                        &wasmparser::ValType::Ref(element.ty),
-                        ConstExprKind::ElementFunction,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Elements::Expressions(&exprs)
-        }
-    };
-    s.segment(ElementSegment {
-        mode,
-        element_type,
-        elements,
-    });
-    Ok(())
-}
-
-#[allow(unused_variables)]
-pub fn op(t: &mut dyn Translator, op: &Operator<'_>) -> Result<Instruction<'static>> {
-    use wasm_encoder::Instruction as I;
-
-    macro_rules! translate {
-        ($( @$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident)*) => {
-            Ok(match op {
-                $(
-                    wasmparser::Operator::$op $({ $($arg),* })? => {
-                        $(
-                            $(let $arg = translate!(map $arg $arg);)*
-                        )?
-                        translate!(build $op $($($arg)*)?)
-                    }
-                )*
-            })
+            ElementKind::Passive => ElementMode::Passive,
+            ElementKind::Declared => ElementMode::Declared,
         };
-
-        // This case is used to map, based on the name of the field, from the
-        // wasmparser payload type to the wasm-encoder payload type through
-        // `Translator` as applicable.
-        (map $arg:ident tag_index) => (t.remap(Item::Tag, *$arg)?);
-        (map $arg:ident function_index) => (t.remap(Item::Function, *$arg)?);
-        (map $arg:ident table) => (t.remap(Item::Table, *$arg)?);
-        (map $arg:ident table_index) => (t.remap(Item::Table, *$arg)?);
-        (map $arg:ident table) => (t.remap(Item::Table, *$arg)?);
-        (map $arg:ident dst_table) => (t.remap(Item::Table, *$arg)?);
-        (map $arg:ident src_table) => (t.remap(Item::Table, *$arg)?);
-        (map $arg:ident type_index) => (t.remap(Item::Type, *$arg)?);
-        (map $arg:ident global_index) => (t.remap(Item::Global, *$arg)?);
-        (map $arg:ident mem) => (t.remap(Item::Memory, *$arg)?);
-        (map $arg:ident src_mem) => (t.remap(Item::Memory, *$arg)?);
-        (map $arg:ident dst_mem) => (t.remap(Item::Memory, *$arg)?);
-        (map $arg:ident data_index) => (t.remap(Item::Data, *$arg)?);
-        (map $arg:ident elem_index) => (t.remap(Item::Element, *$arg)?);
-        (map $arg:ident blockty) => (t.translate_block_type($arg)?);
-        (map $arg:ident relative_depth) => (*$arg);
-        (map $arg:ident targets) => ((
-            $arg
-                .targets()
-                .collect::<Result<Vec<_>, wasmparser::BinaryReaderError>>()?
-                .into(),
-            $arg.default(),
-        ));
-        (map $arg:ident table_byte) => (());
-        (map $arg:ident mem_byte) => (());
-        (map $arg:ident flags) => (());
-        (map $arg:ident ty) => (t.translate_ty($arg)?);
-        (map $arg:ident hty) => (t.translate_heapty($arg)?);
-        (map $arg:ident memarg) => (t.translate_memarg($arg)?);
-        (map $arg:ident local_index) => (*$arg);
-        (map $arg:ident value) => ($arg);
-        (map $arg:ident lane) => (*$arg);
-        (map $arg:ident lanes) => (*$arg);
-
-        // This case takes the arguments of a wasmparser instruction and creates
-        // a wasm-encoder instruction. There are a few special cases for where
-        // the structure of a wasmparser instruction differs from that of
-        // wasm-encoder.
-        (build $op:ident) => (I::$op);
-        (build BrTable $arg:ident) => (I::BrTable($arg.0, $arg.1));
-        (build I32Const $arg:ident) => (I::I32Const(*$arg));
-        (build I64Const $arg:ident) => (I::I64Const(*$arg));
-        (build F32Const $arg:ident) => (I::F32Const(f32::from_bits($arg.bits())));
-        (build F64Const $arg:ident) => (I::F64Const(f64::from_bits($arg.bits())));
-        (build V128Const $arg:ident) => (I::V128Const($arg.i128()));
-        (build $op:ident $arg:ident) => (I::$op($arg));
-        (build CallIndirect $ty:ident $table:ident $_:ident) => (I::CallIndirect {
-            ty: $ty,
-            table: $table,
-        });
-        (build ReturnCallIndirect $ty:ident $table:ident) => (I::ReturnCallIndirect {
-            ty: $ty,
-            table: $table,
-        });
-        (build MemoryGrow $mem:ident $_:ident) => (I::MemoryGrow($mem));
-        (build MemorySize $mem:ident $_:ident) => (I::MemorySize($mem));
-        (build $op:ident $($arg:ident)*) => (I::$op { $($arg),* });
-    }
-
-    wasmparser::for_each_operator!(translate)
-}
-
-pub fn block_type(t: &mut dyn Translator, ty: &wasmparser::BlockType) -> Result<BlockType> {
-    match ty {
-        wasmparser::BlockType::Empty => Ok(BlockType::Empty),
-        wasmparser::BlockType::Type(ty) => Ok(BlockType::Result(t.translate_ty(ty)?)),
-        wasmparser::BlockType::FuncType(f) => Ok(BlockType::FunctionType(t.remap(Item::Type, *f)?)),
-    }
-}
-
-pub fn memarg(t: &mut dyn Translator, memarg: &wasmparser::MemArg) -> Result<MemArg> {
-    Ok(MemArg {
-        offset: memarg.offset,
-        align: memarg.align.into(),
-        memory_index: t.remap(Item::Memory, memarg.memory)?,
-    })
-}
-
-pub fn data(t: &mut dyn Translator, data: wasmparser::Data<'_>, s: &mut DataSection) -> Result<()> {
-    let offset;
-    let mode = match &data.kind {
-        DataKind::Active {
-            memory_index,
-            offset_expr,
-        } => {
-            offset = t.translate_const_expr(
-                offset_expr,
-                &wasmparser::ValType::I32,
-                ConstExprKind::DataOffset,
-            )?;
-            DataSegmentMode::Active {
-                memory_index: t.remap(Item::Memory, *memory_index)?,
-                offset: &offset,
+        let element_type = self.refty(&element.ty)?;
+        let functions;
+        let exprs;
+        let elements = match element.items {
+            wasmparser::ElementItems::Functions(reader) => {
+                functions = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                Elements::Functions(&functions)
             }
-        }
-        DataKind::Passive => DataSegmentMode::Passive,
-    };
-    s.segment(DataSegment {
-        mode,
-        data: data.data.iter().copied(),
-    });
-    Ok(())
-}
-
-pub fn code(t: &mut dyn Translator, body: FunctionBody<'_>, s: &mut CodeSection) -> Result<()> {
-    let locals = body
-        .get_locals_reader()?
-        .into_iter()
-        .map(|local| {
-            let (cnt, ty) = local?;
-            Ok((cnt, t.translate_ty(&ty)?))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut func = Function::new(locals);
-
-    let mut reader = body.get_operators_reader()?;
-    reader.allow_memarg64(true);
-    for op in reader {
-        let op = op?;
-        func.instruction(&t.translate_op(&op)?);
+            wasmparser::ElementItems::Expressions(reader) => {
+                exprs = reader
+                    .into_iter()
+                    .map(|f| self.const_expr(&f?, ConstExprKind::ElementFunction))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Elements::Expressions(&exprs)
+            }
+        };
+        s.segment(ElementSegment {
+            mode,
+            element_type,
+            elements,
+        });
+        Ok(())
     }
-    s.function(&func);
-    Ok(())
+
+    #[allow(unused_variables)]
+    pub fn op(&mut self, op: &Operator<'_>) -> Result<Instruction<'static>> {
+        use wasm_encoder::Instruction as I;
+
+        macro_rules! translate {
+            ($( @$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident)*) => {
+                Ok(match op {
+                    $(
+                        wasmparser::Operator::$op $({ $($arg),* })? => {
+                            $(
+                                $(let $arg = translate!(map $arg $arg);)*
+                            )?
+                            translate!(build $op $($($arg)*)?)
+                        }
+                    )*
+                })
+            };
+
+            // This case is used to map, based on the name of the field, from the
+            // wasmparser payload type to the wasm-encoder payload type through
+            // `Translator` as applicable.
+            (map $arg:ident tag_index) => (*$arg);
+            (map $arg:ident function_index) => (*$arg);
+            (map $arg:ident table) => (*$arg);
+            (map $arg:ident table_index) => (*$arg);
+            (map $arg:ident table) => (*$arg);
+            (map $arg:ident dst_table) => (*$arg);
+            (map $arg:ident src_table) => (*$arg);
+            (map $arg:ident type_index) => (*$arg);
+            (map $arg:ident global_index) => (*$arg);
+            (map $arg:ident mem) => (*$arg);
+            (map $arg:ident src_mem) => (*$arg);
+            (map $arg:ident dst_mem) => (*$arg);
+            (map $arg:ident data_index) => (*$arg);
+            (map $arg:ident elem_index) => (*$arg);
+            (map $arg:ident blockty) => (self.block_type($arg)?);
+            (map $arg:ident relative_depth) => (*$arg);
+            (map $arg:ident targets) => ((
+                $arg
+                    .targets()
+                    .collect::<Result<Vec<_>, wasmparser::BinaryReaderError>>()?
+                    .into(),
+                $arg.default(),
+            ));
+            (map $arg:ident table_byte) => (());
+            (map $arg:ident mem_byte) => (());
+            (map $arg:ident flags) => (());
+            (map $arg:ident ty) => (self.ty($arg)?);
+            (map $arg:ident hty) => (self.heapty($arg)?);
+            (map $arg:ident memarg) => (self.memarg($arg)?);
+            (map $arg:ident local_index) => (*$arg);
+            (map $arg:ident value) => ($arg);
+            (map $arg:ident lane) => (*$arg);
+            (map $arg:ident lanes) => (*$arg);
+
+            // This case takes the arguments of a wasmparser instruction and creates
+            // a wasm-encoder instruction. There are a few special cases for where
+            // the structure of a wasmparser instruction differs from that of
+            // wasm-encoder.
+            (build $op:ident) => (I::$op);
+            (build BrTable $arg:ident) => (I::BrTable($arg.0, $arg.1));
+            (build I32Const $arg:ident) => (I::I32Const(*$arg));
+            (build I64Const $arg:ident) => (I::I64Const(*$arg));
+            (build F32Const $arg:ident) => (I::F32Const(f32::from_bits($arg.bits())));
+            (build F64Const $arg:ident) => (I::F64Const(f64::from_bits($arg.bits())));
+            (build V128Const $arg:ident) => (I::V128Const($arg.i128()));
+            (build $op:ident $arg:ident) => (I::$op($arg));
+            (build CallIndirect $ty:ident $table:ident $_:ident) => (I::CallIndirect {
+                ty: $ty,
+                table: $table,
+            });
+            (build ReturnCallIndirect $ty:ident $table:ident) => (I::ReturnCallIndirect {
+                ty: $ty,
+                table: $table,
+            });
+            (build MemoryGrow $mem:ident $_:ident) => (I::MemoryGrow($mem));
+            (build MemorySize $mem:ident $_:ident) => (I::MemorySize($mem));
+            (build $op:ident $($arg:ident)*) => (I::$op { $($arg),* });
+        }
+
+        wasmparser::for_each_operator!(translate)
+    }
+
+    pub fn block_type(&mut self, ty: &wasmparser::BlockType) -> Result<BlockType> {
+        match ty {
+            wasmparser::BlockType::Empty => Ok(BlockType::Empty),
+            wasmparser::BlockType::Type(ty) => Ok(BlockType::Result(self.ty(ty)?)),
+            wasmparser::BlockType::FuncType(f) => Ok(BlockType::FunctionType(*f)),
+        }
+    }
+
+    pub fn memarg(&mut self, memarg: &wasmparser::MemArg) -> Result<MemArg> {
+        Ok(MemArg {
+            offset: memarg.offset,
+            align: memarg.align.into(),
+            memory_index: memarg.memory,
+        })
+    }
+
+    pub fn data(&mut self, data: wasmparser::Data<'_>, s: &mut DataSection) -> Result<()> {
+        let offset;
+        let mode = match &data.kind {
+            DataKind::Active {
+                memory_index,
+                offset_expr,
+            } => {
+                offset = self.const_expr(offset_expr, ConstExprKind::DataOffset)?;
+                DataSegmentMode::Active {
+                    memory_index: *memory_index,
+                    offset: &offset,
+                }
+            }
+            DataKind::Passive => DataSegmentMode::Passive,
+        };
+        s.segment(DataSegment {
+            mode,
+            data: data.data.iter().copied(),
+        });
+        Ok(())
+    }
+
+    pub fn code(&mut self, body: FunctionBody<'_>, s: &mut CodeSection) -> Result<()> {
+        let locals = body
+            .get_locals_reader()?
+            .into_iter()
+            .map(|local| {
+                let (cnt, ty) = local?;
+                Ok((cnt, self.ty(&ty)?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut func = Function::new(locals);
+
+        let mut reader = body.get_operators_reader()?;
+        reader.allow_memarg64(true);
+        for op in reader {
+            let op = op?;
+            func.instruction(&self.op(&op)?);
+        }
+        s.function(&func);
+        Ok(())
+    }
 }

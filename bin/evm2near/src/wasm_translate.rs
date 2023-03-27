@@ -28,7 +28,8 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             wasmparser::Payload::TypeSection(type_section) => {
                 let mut type_sect = wasm_encoder::TypeSection::new();
                 for typ in type_section {
-                    t.type_def(typ?, &mut type_sect)?;
+                    let (params, results) = t.type_def(typ?)?;
+                    type_sect.function(params, results);
                 }
                 m.section(&type_sect);
             }
@@ -78,7 +79,8 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             wasmparser::Payload::GlobalSection(global_section) => {
                 let mut glob_sect = wasm_encoder::GlobalSection::new();
                 for glob in global_section {
-                    t.global(glob?, &mut glob_sect)?;
+                    let (global, init) = t.global(glob?)?;
+                    glob_sect.global(global, &init);
                 }
                 m.section(&glob_sect);
             }
@@ -100,7 +102,8 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             wasmparser::Payload::ElementSection(element_section) => {
                 let mut element_sect = wasm_encoder::ElementSection::new();
                 for element in element_section {
-                    t.element(element?, &mut element_sect)?;
+                    let element_segment = t.element(element?)?;
+                    element_sect.segment(element_segment);
                 }
                 m.section(&element_sect);
             }
@@ -111,7 +114,8 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             wasmparser::Payload::DataSection(data_section) => {
                 let mut data_sect = wasm_encoder::DataSection::new();
                 for data in data_section {
-                    t.data(data?, &mut data_sect)?;
+                    let data_seg = t.data(data?)?;
+                    data_sect.segment(data_seg);
                 }
                 m.section(&data_sect);
             }
@@ -124,7 +128,8 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
             }
             wasmparser::Payload::CodeSectionEntry(code_section_entry) => {
                 assert!(code_section_size.is_some());
-                t.code(code_section_entry, &mut code_section)?;
+                let code_seg = t.code(code_section_entry)?;
+                code_section.function(&code_seg);
                 let desired_size = code_section_size.unwrap();
                 if code_section.len() == desired_size {
                     m.section(&code_section);
@@ -198,20 +203,20 @@ impl Translator {
         }
     }
 
-    pub fn type_def(&mut self, ty: Type, s: &mut TypeSection) -> Result<()> {
+    pub fn type_def(&mut self, ty: Type) -> Result<(Vec<ValType>, Vec<ValType>)> {
         match ty {
             Type::Func(f) => {
-                s.function(
-                    f.params()
-                        .iter()
-                        .map(|ty| self.ty(ty))
-                        .collect::<Result<Vec<_>>>()?,
-                    f.results()
-                        .iter()
-                        .map(|ty| self.ty(ty))
-                        .collect::<Result<Vec<_>>>()?,
-                );
-                Ok(())
+                let params = f
+                    .params()
+                    .iter()
+                    .map(|ty| self.ty(ty))
+                    .collect::<Result<Vec<_>>>()?;
+                let results = f
+                    .results()
+                    .iter()
+                    .map(|ty| self.ty(ty))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((params, results))
             }
         }
     }
@@ -283,11 +288,10 @@ impl Translator {
         }
     }
 
-    pub fn global(&mut self, global: Global, s: &mut GlobalSection) -> Result<()> {
+    pub fn global(&mut self, global: Global) -> Result<(GlobalType, ConstExpr)> {
         let ty = self.global_type(&global.ty)?;
         let insn = self.const_expr(&global.init_expr, ConstExprKind::Global)?;
-        s.global(ty, &insn);
-        Ok(())
+        Ok((ty, insn))
     }
 
     pub fn const_expr(
@@ -317,48 +321,43 @@ impl Translator {
         Ok(wasm_encoder::ConstExpr::raw(offset_bytes))
     }
 
-    pub fn element(
-        &mut self,
-        element: wasmparser::Element<'_>,
-        s: &mut ElementSection,
-    ) -> Result<()> {
-        let offset;
-        let mode = match &element.kind {
+    pub fn element(&mut self, element: wasmparser::Element<'_>) -> Result<ElementSegment> {
+        let mode: ElementMode<'static> = match &element.kind {
             ElementKind::Active {
                 table_index,
                 offset_expr,
             } => {
-                offset = self.const_expr(offset_expr, ConstExprKind::ElementOffset)?;
+                let offset = self.const_expr(offset_expr, ConstExprKind::ElementOffset)?;
+                let offset_box = Box::new(offset);
                 ElementMode::Active {
                     table: Some(*table_index),
-                    offset: &offset,
+                    offset: Box::leak(offset_box),
                 }
             }
             ElementKind::Passive => ElementMode::Passive,
             ElementKind::Declared => ElementMode::Declared,
         };
         let element_type = self.refty(&element.ty)?;
-        let functions;
-        let exprs;
         let elements = match element.items {
             wasmparser::ElementItems::Functions(reader) => {
-                functions = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
-                Elements::Functions(&functions)
+                let functions = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                let functions_box = Box::new(functions);
+                Elements::Functions(Box::leak(functions_box))
             }
             wasmparser::ElementItems::Expressions(reader) => {
-                exprs = reader
+                let exprs = reader
                     .into_iter()
                     .map(|f| self.const_expr(&f?, ConstExprKind::ElementFunction))
                     .collect::<Result<Vec<_>, _>>()?;
-                Elements::Expressions(&exprs)
+                let exprs_box = Box::new(exprs);
+                Elements::Expressions(Box::leak(exprs_box))
             }
         };
-        s.segment(ElementSegment {
+        Ok(ElementSegment {
             mode,
             element_type,
             elements,
-        });
-        Ok(())
+        })
     }
 
     #[allow(unused_variables)]
@@ -460,29 +459,26 @@ impl Translator {
         })
     }
 
-    pub fn data(&mut self, data: wasmparser::Data<'_>, s: &mut DataSection) -> Result<()> {
-        let offset;
-        let mode = match &data.kind {
+    pub fn data(&mut self, data: wasmparser::Data<'_>) -> Result<DataSegment<Vec<u8>>> {
+        let mode: DataSegmentMode<'static> = match &data.kind {
             DataKind::Active {
                 memory_index,
                 offset_expr,
             } => {
-                offset = self.const_expr(offset_expr, ConstExprKind::DataOffset)?;
+                let offset = self.const_expr(offset_expr, ConstExprKind::DataOffset)?;
+                let offset_box = Box::new(offset);
                 DataSegmentMode::Active {
                     memory_index: *memory_index,
-                    offset: &offset,
+                    offset: Box::leak(offset_box), // todo satisfy static lifetime for the `mode` binding
                 }
             }
             DataKind::Passive => DataSegmentMode::Passive,
         };
-        s.segment(DataSegment {
-            mode,
-            data: data.data.iter().copied(),
-        });
-        Ok(())
+        let data = data.data.to_vec();
+        Ok(DataSegment { mode, data })
     }
 
-    pub fn code(&mut self, body: FunctionBody<'_>, s: &mut CodeSection) -> Result<()> {
+    pub fn code(&mut self, body: FunctionBody<'_>) -> Result<Function> {
         let locals = body
             .get_locals_reader()?
             .into_iter()
@@ -499,7 +495,6 @@ impl Translator {
             let op = op?;
             func.instruction(&self.op(&op)?);
         }
-        s.function(&func);
-        Ok(())
+        Ok(func)
     }
 }

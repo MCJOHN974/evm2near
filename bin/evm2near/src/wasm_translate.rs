@@ -4,7 +4,117 @@ use anyhow::{Error, Result};
 use wasm_encoder::*;
 use wasmparser::{DataKind, ElementKind, FunctionBody, Global, Operator, Type};
 
-pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
+pub type Params = Vec<ValType>;
+pub type Results = Vec<ValType>;
+
+pub struct Import {
+    module: String,
+    field: String,
+    ty: EntityType,
+}
+
+pub type TypeIndex = u32;
+
+pub struct Export {
+    name: String,
+    kind: ExportKind,
+    index: u32,
+}
+
+pub struct ModuleBuilder<'a> {
+    types: Vec<(Params, Results)>,
+    imports: Vec<Import>,
+    functions: Vec<TypeIndex>,
+    tables: Vec<TableType>,
+    memories: Vec<MemoryType>,
+    globals: Vec<(GlobalType, ConstExpr)>,
+    exports: Vec<Export>,
+    start_sect: StartSection,
+    elements: Vec<ElementSegment<'a>>,
+    code: Vec<Function>,
+    data: Vec<()>,
+}
+
+impl ModuleBuilder<'_> {
+    fn new() -> Self {
+        ModuleBuilder {
+            types: Default::default(),
+            imports: Default::default(),
+            functions: Default::default(),
+            tables: Default::default(),
+            memories: Default::default(),
+            globals: Default::default(),
+            exports: Default::default(),
+            start_sect: StartSection { function_index: 0 },
+            elements: Default::default(),
+            code: Default::default(),
+            data: Default::default(),
+        }
+    }
+
+    fn build(self) -> Module {
+        let mut m = Module::new();
+        let mut type_section = TypeSection::new();
+        for (params, results) in self.types {
+            type_section.function(params, results);
+        }
+        m.section(&type_section);
+
+        let mut import_section = ImportSection::new();
+        for i in self.imports {
+            import_section.import(&i.module, &i.field, i.ty);
+        }
+        m.section(&import_section);
+
+        let mut function_section = FunctionSection::new();
+        for f in self.functions {
+            function_section.function(f);
+        }
+        m.section(&function_section);
+
+        let mut table_section = TableSection::new();
+        for t in self.tables {
+            table_section.table(t);
+        }
+        m.section(&table_section);
+
+        let mut memory_section = MemorySection::new();
+        for m in self.memories {
+            memory_section.memory(m);
+        }
+        m.section(&memory_section);
+
+        let mut global_section = GlobalSection::new();
+        for (global_type, init_expr) in self.globals {
+            global_section.global(global_type, &init_expr);
+        }
+        m.section(&global_section);
+
+        let mut export_section = ExportSection::new();
+        for e in self.exports {
+            export_section.export(&e.name, e.kind, e.index);
+        }
+        m.section(&export_section);
+
+        m.section(&self.start_sect);
+
+        let mut element_section = ElementSection::new();
+        for e in self.elements {
+            element_section.segment(e);
+        }
+        m.section(&element_section);
+
+        let mut code_section = CodeSection::new();
+        for c in self.code {
+            code_section.function(&c);
+        }
+        m.section(&code_section);
+
+        m
+    }
+}
+
+pub fn parse(wasm: Vec<u8>) -> Result<Module> {
     let parsed = wasmparser::Parser::new(0)
         .parse_all(wasm.as_slice())
         .map(|p| p.unwrap())
@@ -15,6 +125,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<wasm_encoder::Module> {
     let mut code_section_size: Option<u32> = None;
     let mut code_section = wasm_encoder::CodeSection::new();
 
+    let mut builder = ModuleBuilder::new();
     let mut m = wasm_encoder::Module::new();
     for p in parsed {
         match p {

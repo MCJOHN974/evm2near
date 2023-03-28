@@ -134,7 +134,9 @@ pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
         .map(|p| p.unwrap())
         .collect::<Vec<_>>();
 
-    let mut t = Translator;
+    let translator = Translator;
+    let t_b = Box::new(translator);
+    let t = Box::leak(t_b); //todo remove that garbage
 
     let mut code_section_size: Option<u32> = None;
 
@@ -288,7 +290,7 @@ pub enum ConstExprKind {
 pub struct Translator;
 
 impl Translator {
-    fn type_ref(&mut self, type_ref: wasmparser::TypeRef) -> Result<wasm_encoder::EntityType> {
+    fn type_ref(&self, type_ref: wasmparser::TypeRef) -> Result<wasm_encoder::EntityType> {
         match type_ref {
             wasmparser::TypeRef::Func(f) => Ok(EntityType::Function(f)),
             wasmparser::TypeRef::Table(t) => {
@@ -313,7 +315,7 @@ impl Translator {
         }
     }
 
-    pub fn type_def(&mut self, ty: Type) -> Result<(Vec<ValType>, Vec<ValType>)> {
+    pub fn type_def(&self, ty: Type) -> Result<(Vec<ValType>, Vec<ValType>)> {
         match ty {
             Type::Func(f) => {
                 let params = f
@@ -331,7 +333,7 @@ impl Translator {
         }
     }
 
-    pub fn ext_kind(&mut self, ekind: wasmparser::ExternalKind) -> ExportKind {
+    pub fn ext_kind(&self, ekind: wasmparser::ExternalKind) -> ExportKind {
         match ekind {
             wasmparser::ExternalKind::Func => ExportKind::Func,
             wasmparser::ExternalKind::Table => ExportKind::Table,
@@ -341,7 +343,7 @@ impl Translator {
         }
     }
 
-    pub fn table_type(&mut self, ty: &wasmparser::TableType) -> Result<wasm_encoder::TableType> {
+    pub fn table_type(&self, ty: &wasmparser::TableType) -> Result<wasm_encoder::TableType> {
         Ok(wasm_encoder::TableType {
             element_type: self.refty(&ty.element_type)?,
             minimum: ty.initial,
@@ -349,7 +351,7 @@ impl Translator {
         })
     }
 
-    pub fn memory_type(&mut self, ty: &wasmparser::MemoryType) -> Result<wasm_encoder::MemoryType> {
+    pub fn memory_type(&self, ty: &wasmparser::MemoryType) -> Result<wasm_encoder::MemoryType> {
         Ok(wasm_encoder::MemoryType {
             memory64: ty.memory64,
             minimum: ty.initial,
@@ -358,21 +360,21 @@ impl Translator {
         })
     }
 
-    pub fn global_type(&mut self, ty: &wasmparser::GlobalType) -> Result<wasm_encoder::GlobalType> {
+    pub fn global_type(&self, ty: &wasmparser::GlobalType) -> Result<wasm_encoder::GlobalType> {
         Ok(wasm_encoder::GlobalType {
             val_type: self.ty(&ty.content_type)?,
             mutable: ty.mutable,
         })
     }
 
-    pub fn tag_type(&mut self, ty: &wasmparser::TagType) -> Result<wasm_encoder::TagType> {
+    pub fn tag_type(&self, ty: &wasmparser::TagType) -> Result<wasm_encoder::TagType> {
         Ok(wasm_encoder::TagType {
             kind: TagKind::Exception,
             func_type_idx: ty.func_type_idx,
         })
     }
 
-    pub fn ty(&mut self, ty: &wasmparser::ValType) -> Result<ValType> {
+    pub fn ty(&self, ty: &wasmparser::ValType) -> Result<ValType> {
         match ty {
             wasmparser::ValType::I32 => Ok(ValType::I32),
             wasmparser::ValType::I64 => Ok(ValType::I64),
@@ -383,14 +385,14 @@ impl Translator {
         }
     }
 
-    pub fn refty(&mut self, ty: &wasmparser::RefType) -> Result<RefType> {
+    pub fn refty(&self, ty: &wasmparser::RefType) -> Result<RefType> {
         Ok(RefType {
             nullable: ty.nullable,
             heap_type: self.heapty(&ty.heap_type)?,
         })
     }
 
-    pub fn heapty(&mut self, ty: &wasmparser::HeapType) -> Result<HeapType> {
+    pub fn heapty(&self, ty: &wasmparser::HeapType) -> Result<HeapType> {
         match ty {
             wasmparser::HeapType::Func => Ok(HeapType::Func),
             wasmparser::HeapType::Extern => Ok(HeapType::Extern),
@@ -398,14 +400,14 @@ impl Translator {
         }
     }
 
-    pub fn global(&mut self, global: Global) -> Result<(GlobalType, ConstExpr)> {
+    pub fn global(&self, global: Global) -> Result<(GlobalType, ConstExpr)> {
         let ty = self.global_type(&global.ty)?;
         let insn = self.const_expr(&global.init_expr, ConstExprKind::Global)?;
         Ok((ty, insn))
     }
 
     pub fn const_expr(
-        &mut self,
+        &self,
         e: &wasmparser::ConstExpr<'_>,
         ctx: ConstExprKind,
     ) -> Result<wasm_encoder::ConstExpr> {
@@ -431,7 +433,7 @@ impl Translator {
         Ok(wasm_encoder::ConstExpr::raw(offset_bytes))
     }
 
-    pub fn element(&mut self, element: wasmparser::Element<'_>) -> Result<ElementSegment> {
+    pub fn element(&self, element: wasmparser::Element<'_>) -> Result<ElementSegment> {
         let mode: ElementMode<'static> = match &element.kind {
             ElementKind::Active {
                 table_index,
@@ -471,7 +473,7 @@ impl Translator {
     }
 
     #[allow(unused_variables)]
-    pub fn op(&mut self, op: &Operator<'_>) -> Result<Instruction<'static>> {
+    pub fn op(&self, op: &Operator<'_>) -> Result<Instruction<'static>> {
         use wasm_encoder::Instruction as I;
 
         macro_rules! translate {
@@ -553,7 +555,7 @@ impl Translator {
         wasmparser::for_each_operator!(translate)
     }
 
-    pub fn block_type(&mut self, ty: &wasmparser::BlockType) -> Result<BlockType> {
+    pub fn block_type(&self, ty: &wasmparser::BlockType) -> Result<BlockType> {
         match ty {
             wasmparser::BlockType::Empty => Ok(BlockType::Empty),
             wasmparser::BlockType::Type(ty) => Ok(BlockType::Result(self.ty(ty)?)),
@@ -561,7 +563,7 @@ impl Translator {
         }
     }
 
-    pub fn memarg(&mut self, memarg: &wasmparser::MemArg) -> Result<MemArg> {
+    pub fn memarg(&self, memarg: &wasmparser::MemArg) -> Result<MemArg> {
         Ok(MemArg {
             offset: memarg.offset,
             align: memarg.align.into(),
@@ -569,7 +571,7 @@ impl Translator {
         })
     }
 
-    pub fn data(&mut self, data: wasmparser::Data<'_>) -> Result<DataSegment<Vec<u8>>> {
+    pub fn data(&self, data: wasmparser::Data<'_>) -> Result<DataSegment<Vec<u8>>> {
         let mode: DataSegmentMode<'static> = match &data.kind {
             DataKind::Active {
                 memory_index,
@@ -588,7 +590,7 @@ impl Translator {
         Ok(DataSegment { mode, data })
     }
 
-    pub fn code(&mut self, body: FunctionBody<'_>) -> Result<Function> {
+    pub fn code(&self, body: FunctionBody<'_>) -> Result<Function> {
         let locals = body
             .get_locals_reader()?
             .into_iter()

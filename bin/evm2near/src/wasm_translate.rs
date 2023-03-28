@@ -15,6 +15,12 @@ pub struct Import {
 
 pub type TypeIndex = u32;
 
+pub struct Glob {
+    //todo rename
+    typ: GlobalType,
+    init: ConstExpr,
+}
+
 pub struct Export {
     name: String,
     kind: ExportKind,
@@ -27,12 +33,12 @@ pub struct ModuleBuilder<'a> {
     functions: Vec<TypeIndex>,
     tables: Vec<TableType>,
     memories: Vec<MemoryType>,
-    globals: Vec<(GlobalType, ConstExpr)>,
+    globals: Vec<Glob>,
     exports: Vec<Export>,
     start_sect: StartSection,
     elements: Vec<ElementSegment<'a>>,
     code: Vec<Function>,
-    data: Vec<()>,
+    data: Vec<DataSegment<'a, Vec<u8>>>,
 }
 
 impl ModuleBuilder<'_> {
@@ -52,7 +58,7 @@ impl ModuleBuilder<'_> {
         }
     }
 
-    fn build(self) -> Module {
+    pub fn build(self) -> Module {
         let mut m = Module::new();
         let mut type_section = TypeSection::new();
         for (params, results) in self.types {
@@ -85,8 +91,8 @@ impl ModuleBuilder<'_> {
         m.section(&memory_section);
 
         let mut global_section = GlobalSection::new();
-        for (global_type, init_expr) in self.globals {
-            global_section.global(global_type, &init_expr);
+        for global in self.globals {
+            global_section.global(global.typ, &global.init);
         }
         m.section(&global_section);
 
@@ -110,11 +116,19 @@ impl ModuleBuilder<'_> {
         }
         m.section(&code_section);
 
+        //todo data count section
+
+        let mut data_section = DataSection::new();
+        for d in self.data {
+            data_section.segment(d);
+        }
+        m.section(&data_section);
+
         m
     }
 }
 
-pub fn parse(wasm: Vec<u8>) -> Result<Module> {
+pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
     let parsed = wasmparser::Parser::new(0)
         .parse_all(wasm.as_slice())
         .map(|p| p.unwrap())
@@ -123,10 +137,8 @@ pub fn parse(wasm: Vec<u8>) -> Result<Module> {
     let mut t = Translator;
 
     let mut code_section_size: Option<u32> = None;
-    let mut code_section = wasm_encoder::CodeSection::new();
 
     let mut builder = ModuleBuilder::new();
-    let mut m = wasm_encoder::Module::new();
     for p in parsed {
         match p {
             wasmparser::Payload::Version {
@@ -137,98 +149,85 @@ pub fn parse(wasm: Vec<u8>) -> Result<Module> {
                 assert_eq!(encoding, wasmparser::Encoding::Module);
             }
             wasmparser::Payload::TypeSection(type_section) => {
-                let mut type_sect = wasm_encoder::TypeSection::new();
                 for typ in type_section {
                     let (params, results) = t.type_def(typ?)?;
-                    type_sect.function(params, results);
+                    builder.types.push((params, results));
                 }
-                m.section(&type_sect);
             }
             wasmparser::Payload::ImportSection(import_section) => {
-                let mut import_sect = wasm_encoder::ImportSection::new();
                 for import in import_section {
                     let import = import?;
                     let typ = t.type_ref(import.ty)?;
-                    import_sect.import(import.module, import.name, typ);
+                    builder.imports.push(Import {
+                        module: import.module.to_string(),
+                        field: import.name.to_string(),
+                        ty: typ,
+                    });
                 }
-                m.section(&import_sect);
             }
             wasmparser::Payload::FunctionSection(function_section) => {
-                let mut function_sect = wasm_encoder::FunctionSection::new();
                 for function in function_section {
-                    function_sect.function(function?);
+                    builder.functions.push(function?);
                 }
-                m.section(&function_sect);
             }
             wasmparser::Payload::TableSection(table_section) => {
-                let mut table_sect = wasm_encoder::TableSection::new();
                 for table in table_section {
                     let table = table?;
                     let table_type = t.table_type(&table.ty)?; // todo TableInit is not used!
-                    table_sect.table(table_type);
+                    builder.tables.push(table_type);
                 }
-                m.section(&table_sect);
             }
             wasmparser::Payload::MemorySection(memory_section) => {
-                let mut memory_sect = wasm_encoder::MemorySection::new();
                 for mem in memory_section {
                     let mem = mem?;
                     let memory_type = t.memory_type(&mem)?;
-                    memory_sect.memory(memory_type);
+                    builder.memories.push(memory_type);
                 }
-                m.section(&memory_sect);
             }
             wasmparser::Payload::TagSection(tag_section) => {
-                let mut tag_sect = wasm_encoder::TagSection::new();
                 for tag in tag_section {
                     let tag = tag?;
-                    let tag_type = t.tag_type(&tag)?;
-                    tag_sect.tag(tag_type);
+                    let _tag_type = t.tag_type(&tag)?;
+                    panic!("unspecified section (spec doesnt have that one! WTF)");
                 }
-                m.section(&tag_sect);
             }
             wasmparser::Payload::GlobalSection(global_section) => {
-                let mut glob_sect = wasm_encoder::GlobalSection::new();
                 for glob in global_section {
-                    let (global, init) = t.global(glob?)?;
-                    glob_sect.global(global, &init);
+                    let (typ, init) = t.global(glob?)?;
+                    builder.globals.push(Glob { typ, init });
                 }
-                m.section(&glob_sect);
             }
             wasmparser::Payload::ExportSection(export_section) => {
-                let mut export_sect = wasm_encoder::ExportSection::new();
                 for export in export_section {
                     let export = export?;
-                    export_sect.export(export.name, t.ext_kind(export.kind), export.index);
+                    builder.exports.push(Export {
+                        name: export.name.to_string(),
+                        kind: t.ext_kind(export.kind),
+                        index: export.index,
+                    });
                 }
-                m.section(&export_sect);
             }
             wasmparser::Payload::StartSection {
                 func: function_index,
                 range: _range,
             } => {
                 let start_sect = wasm_encoder::StartSection { function_index };
-                m.section(&start_sect);
+                builder.start_sect = start_sect;
             }
             wasmparser::Payload::ElementSection(element_section) => {
-                let mut element_sect = wasm_encoder::ElementSection::new();
                 for element in element_section {
                     let element_segment = t.element(element?)?;
-                    element_sect.segment(element_segment);
+                    builder.elements.push(element_segment);
                 }
-                m.section(&element_sect);
             }
-            wasmparser::Payload::DataCountSection { count, range: _ } => {
-                let data_count_sect = wasm_encoder::DataCountSection { count };
-                m.section(&data_count_sect);
+            wasmparser::Payload::DataCountSection { count: _, range: _ } => {
+                panic!("unspecified section (spec doesnt have that one! WTF)");
             }
             wasmparser::Payload::DataSection(data_section) => {
-                let mut data_sect = wasm_encoder::DataSection::new();
                 for data in data_section {
                     let data_seg = t.data(data?)?;
-                    data_sect.segment(data_seg);
+                    builder.data.push(data_seg);
                 }
-                m.section(&data_sect);
             }
             wasmparser::Payload::CodeSectionStart {
                 count,
@@ -240,12 +239,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<Module> {
             wasmparser::Payload::CodeSectionEntry(code_section_entry) => {
                 assert!(code_section_size.is_some());
                 let code_seg = t.code(code_section_entry)?;
-                code_section.function(&code_seg);
-                let desired_size = code_section_size.unwrap();
-                if code_section.len() == desired_size {
-                    m.section(&code_section);
-                    code_section_size = None;
-                }
+                builder.code.push(code_seg);
             }
             wasmparser::Payload::ModuleSection {
                 parser: _,
@@ -274,7 +268,12 @@ pub fn parse(wasm: Vec<u8>) -> Result<Module> {
         }
     }
 
-    Ok(m)
+    assert_eq!(
+        u32::try_from(builder.code.len()).unwrap(),
+        code_section_size.unwrap()
+    );
+
+    Ok(builder)
 }
 
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]

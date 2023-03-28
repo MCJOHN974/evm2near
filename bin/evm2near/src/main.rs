@@ -180,7 +180,7 @@ fn main() -> impl std::process::Termination {
     };
 
     let r_lib = wasm_translate::parse(current_runtime.clone()).unwrap();
-    let r_lib_bytes = r_lib.finish();
+    let r_lib_bytes = r_lib.build().finish();
     std::fs::write("r_lib.wasm", r_lib_bytes).expect("fs err");
 
     let runtime_library = parity_wasm::deserialize_buffer(current_runtime.as_slice()).unwrap();

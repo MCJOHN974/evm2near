@@ -183,7 +183,8 @@ fn main() -> impl std::process::Termination {
     let r_lib_bytes = r_lib.build().finish();
     std::fs::write("r_lib.wasm", r_lib_bytes).expect("fs err");
 
-    let runtime_library = parity_wasm::deserialize_buffer(current_runtime.as_slice()).unwrap();
+    let runtime_library: parity_wasm::elements::Module =
+        parity_wasm::deserialize_buffer(current_runtime.as_slice()).unwrap();
 
     let output_program = compile(
         &input_program,

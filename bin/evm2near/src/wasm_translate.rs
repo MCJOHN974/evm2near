@@ -35,7 +35,7 @@ pub struct ModuleBuilder<'a> {
     memories: Vec<MemoryType>,
     globals: Vec<Glob>,
     exports: Vec<Export>,
-    start_sect: StartSection,
+    start_sect: Option<StartSection>,
     elements: Vec<ElementSegment<'a>>,
     code: Vec<Function>,
     data: Vec<DataSegment<'a, Vec<u8>>>,
@@ -51,7 +51,7 @@ impl ModuleBuilder<'_> {
             memories: Default::default(),
             globals: Default::default(),
             exports: Default::default(),
-            start_sect: StartSection { function_index: 0 },
+            start_sect: None,
             elements: Default::default(),
             code: Default::default(),
             data: Default::default(),
@@ -102,7 +102,7 @@ impl ModuleBuilder<'_> {
         }
         m.section(&export_section);
 
-        m.section(&self.start_sect);
+        self.start_sect.map(|start_sect| m.section(&start_sect));
 
         let mut element_section = ElementSection::new();
         for e in self.elements {
@@ -115,8 +115,6 @@ impl ModuleBuilder<'_> {
             code_section.function(&c);
         }
         m.section(&code_section);
-
-        //todo data count section
 
         let mut data_section = DataSection::new();
         for d in self.data {
@@ -214,7 +212,7 @@ pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
                 range: _range,
             } => {
                 let start_sect = wasm_encoder::StartSection { function_index };
-                builder.start_sect = start_sect;
+                builder.start_sect = Some(start_sect);
             }
             wasmparser::Payload::ElementSection(element_section) => {
                 for element in element_section {

@@ -75,6 +75,17 @@ async fn main() -> anyhow::Result<()> {
             if event_name == "push" && ref_name == "refs/heads/master" {
                 // push to master
                 let output = Command::new("sh")
+                    .arg("-c")
+                    .arg("git rev-parse --short HEAD")
+                    .output()
+                    .expect("failed to execute process");
+                let stdout = output.stdout;
+                let mut tmp = std::str::from_utf8(&stdout).unwrap().to_string();
+                tmp.pop(); // to remove \n in the end
+                tmp
+            } else {
+                // pull request
+                let output = Command::new("sh")
                 .arg("-c")
                 .arg("git log --pretty=format:\"%h\" -n 2 | tail -1")
                 .output()
@@ -82,13 +93,6 @@ async fn main() -> anyhow::Result<()> {
 
                 let stdout = output.stdout;
                 let tmp = std::str::from_utf8(&stdout).unwrap().to_string();
-                tmp
-            } else {
-                // pull request
-                let output = Command::new("sh")
-                let stdout = output.stdout;
-                let mut tmp = std::str::from_utf8(&stdout).unwrap().to_string();
-                tmp.pop(); // to remove \n in the end
                 tmp
             }
         }

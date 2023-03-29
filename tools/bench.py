@@ -72,8 +72,7 @@ if __name__ == "__main__":
         else:
             # pull request
             result = subprocess.run(['bash', '-c', 'git log --pretty=format:\"%h\" -n 2 | tail -1'], stdout=subprocess.PIPE)
-            commit = result.stdout.decode('utf-8')
-            
+            commit = result.stdout.decode('utf-8')          
 
     print(f'Commit = {commit}')
 

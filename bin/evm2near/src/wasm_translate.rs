@@ -2,7 +2,7 @@
 
 use anyhow::{Error, Result};
 use wasm_encoder::*;
-use wasmparser::{DataKind, ElementKind, FunctionBody, Global, Operator, Type};
+use wasmparser::{BinaryReader, DataKind, ElementKind, FunctionBody, Global, Operator, Type};
 
 pub type Params = Vec<ValType>;
 pub type Results = Vec<ValType>;
@@ -15,30 +15,30 @@ pub struct Import {
 
 pub type TypeIndex = u32;
 
-pub struct Glob {
+pub struct Glob<'a> {
     //todo rename
-    typ: GlobalType,
-    init: ConstExpr,
+    pub typ: GlobalType,
+    pub init_instr: Instruction<'a>,
 }
 
 pub struct Export {
-    name: String,
-    kind: ExportKind,
-    index: u32,
+    pub name: String,
+    pub kind: ExportKind,
+    pub index: u32,
 }
 
 pub struct ModuleBuilder<'a> {
-    types: Vec<(Params, Results)>,
-    imports: Vec<Import>,
-    functions: Vec<TypeIndex>,
-    tables: Vec<TableType>,
-    memories: Vec<MemoryType>,
-    globals: Vec<Glob>,
-    exports: Vec<Export>,
-    start_sect: Option<StartSection>,
-    elements: Vec<ElementSegment<'a>>,
-    code: Vec<Function>,
-    data: Vec<DataSegment<'a, Vec<u8>>>,
+    pub types: Vec<(Params, Results)>,
+    pub imports: Vec<Import>,
+    pub functions: Vec<TypeIndex>,
+    pub tables: Vec<TableType>,
+    pub memories: Vec<MemoryType>,
+    pub globals: Vec<Glob<'a>>,
+    pub exports: Vec<Export>,
+    pub start_sect: Option<StartSection>,
+    pub elements: Vec<ElementSegment<'a>>,
+    pub code: Vec<Function>,
+    pub data: Vec<DataSegment<'a, Vec<u8>>>,
 }
 
 impl ModuleBuilder<'_> {
@@ -92,7 +92,10 @@ impl ModuleBuilder<'_> {
 
         let mut global_section = GlobalSection::new();
         for global in self.globals {
-            global_section.global(global.typ, &global.init);
+            let mut const_expr_buf = Vec::new();
+            global.init_instr.encode(&mut const_expr_buf);
+            let init = ConstExpr::raw(const_expr_buf);
+            global_section.global(global.typ, &init);
         }
         m.section(&global_section);
 
@@ -193,8 +196,8 @@ pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
             }
             wasmparser::Payload::GlobalSection(global_section) => {
                 for glob in global_section {
-                    let (typ, init) = t.global(glob?)?;
-                    builder.globals.push(Glob { typ, init });
+                    let (typ, init_instr) = t.global(glob?)?;
+                    builder.globals.push(Glob { typ, init_instr });
                 }
             }
             wasmparser::Payload::ExportSection(export_section) => {
@@ -398,10 +401,21 @@ impl Translator {
         }
     }
 
-    pub fn global(&self, global: Global) -> Result<(GlobalType, ConstExpr)> {
+    pub fn global(&self, global: Global) -> Result<(GlobalType, Instruction)> {
         let ty = self.global_type(&global.ty)?;
-        let insn = self.const_expr(&global.init_expr, ConstExprKind::Global)?;
-        Ok((ty, insn))
+        let instr = self.global_const_expr(&global.init_expr)?;
+        Ok((ty, instr))
+    }
+
+    pub fn global_const_expr(&self, e: &wasmparser::ConstExpr<'_>) -> Result<Instruction> {
+        let mut e = e.get_operators_reader();
+        let op = e.read()?;
+        let instruction = self.op(&op)?;
+        match e.read()? {
+            Operator::End if e.eof() => {}
+            _ => return Err(Error::msg("invalid global init expression")),
+        }
+        Ok(instruction)
     }
 
     pub fn const_expr(
@@ -410,7 +424,6 @@ impl Translator {
         ctx: ConstExprKind,
     ) -> Result<wasm_encoder::ConstExpr> {
         let mut e = e.get_operators_reader();
-        let mut offset_bytes = Vec::new();
         let op = e.read()?;
         if let ConstExprKind::ElementFunction = ctx {
             match op {
@@ -423,6 +436,7 @@ impl Translator {
                 _ => return Err(Error::msg("no mutations applicable")),
             }
         }
+        let mut offset_bytes = Vec::new();
         self.op(&op)?.encode(&mut offset_bytes);
         match e.read()? {
             Operator::End if e.eof() => {}

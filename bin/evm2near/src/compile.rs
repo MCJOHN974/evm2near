@@ -18,6 +18,7 @@ use parity_wasm::{
 };
 use relooper::graph::{enrichments::EnrichedCfg, relooper::ReBlock, supergraph::reduce};
 use relooper::graph::{relooper::ReSeq, supergraph::SLabel};
+use wasm_encoder::ExportKind;
 
 use crate::{
     abi::Functions,
@@ -617,6 +618,26 @@ fn find_runtime_function(module: &Module, name: &str) -> Option<FunctionIndex> {
     None // not found
 }
 
+fn find_runtime_function_n(
+    module: &crate::wasm_translate::ModuleBuilder,
+    func_name: &str,
+) -> Option<FunctionIndex> {
+    for export in module.exports.iter() {
+        if let crate::wasm_translate::Export {
+            name,
+            kind: ExportKind::Func,
+            index,
+        } = export
+        {
+            if name == func_name {
+                return Some(*index);
+            }
+        }
+        continue;
+    }
+    None // not found
+}
+
 fn find_abi_buffer(module: &Module) -> Option<DataOffset> {
     for export in module.export_section().unwrap().entries() {
         match export.internal() {
@@ -637,6 +658,27 @@ fn find_abi_buffer(module: &Module) -> Option<DataOffset> {
             }
             _ => continue,
         }
+    }
+    None // not found
+}
+
+fn find_abi_buffer_n(module: &crate::wasm_translate::ModuleBuilder) -> Option<DataOffset> {
+    for export in module.exports.iter() {
+        if let crate::wasm_translate::Export {
+            name,
+            kind: ExportKind::Global,
+            index,
+        } = export
+        {
+            if name == "_abi_buffer" {
+                let g = module.globals.get(*index as usize).unwrap();
+                match g.init_instr {
+                    wasm_encoder::Instruction::I32Const(off) => return Some(off),
+                    _ => return None,
+                }
+            }
+        }
+        continue;
     }
     None // not found
 }

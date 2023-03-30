@@ -9,11 +9,14 @@ use wasmparser::{
 
 pub type Params = Vec<ValType>;
 pub type Results = Vec<ValType>;
+
+#[derive(Debug)]
 pub struct Signature {
     pub params: Params,
     pub results: Results,
 }
 
+#[derive(Debug)]
 pub struct Import {
     module: String,
     field: String,
@@ -22,18 +25,21 @@ pub struct Import {
 
 pub type TypeIndex = u32;
 
+#[derive(Debug)]
 pub struct Glob<'a> {
     //todo rename
     pub typ: GlobalType,
     pub init_instr: Instruction<'a>,
 }
 
+#[derive(Debug)]
 pub struct Export {
     pub name: String,
     pub kind: ExportKind,
     pub index: u32,
 }
 
+#[derive(Debug)]
 pub enum DataMode<'a> {
     Active {
         memory_index: u32,
@@ -42,11 +48,13 @@ pub enum DataMode<'a> {
     Passive,
 }
 
+#[derive(Debug)]
 pub struct Data<'a> {
     pub mode: DataMode<'a>,
     pub data: Vec<u8>,
 }
 
+#[derive(Debug)]
 pub struct ModuleBuilder<'a> {
     pub types: Vec<Signature>,
     pub imports: Vec<Import>,
@@ -185,7 +193,7 @@ impl<'a> ModuleBuilder<'a> {
     }
 }
 
-pub fn parse<'a>(wasm: &'a Vec<u8>) -> Result<ModuleBuilder<'a>> {
+pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
     let parsed = wasmparser::Parser::new(0)
         .parse_all(wasm.as_slice())
         .map(|p| p.unwrap())
@@ -335,13 +343,11 @@ pub fn parse<'a>(wasm: &'a Vec<u8>) -> Result<ModuleBuilder<'a>> {
     Ok(builder)
 }
 
+// todo remove
 #[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub enum ConstExprKind {
-    Global,
     ElementOffset,
     ElementFunction,
-    DataOffset,
-    TableInit,
 }
 
 pub struct Translator;

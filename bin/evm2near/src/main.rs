@@ -14,7 +14,6 @@ mod solidity;
 mod wasm_translate;
 
 use clap::Parser;
-use parity_wasm::elements::Serialize;
 use std::{
     ffi::OsStr,
     fs::{File, OpenOptions},
@@ -179,15 +178,10 @@ fn main() -> impl std::process::Termination {
         OutputABI::Wasi => runtime_wasi.to_vec(),
     };
 
-    let r_lib = wasm_translate::parse(current_runtime.clone()).unwrap();
-    let r_lib_bytes = r_lib.build().finish();
-    std::fs::write("r_lib.wasm", r_lib_bytes).expect("fs err");
+    let runtime_library = wasm_translate::parse(&current_runtime).unwrap();
 
-    let runtime_library: parity_wasm::elements::Module =
-        parity_wasm::deserialize_buffer(current_runtime.as_slice()).unwrap();
-
-    let output_program = compile(
-        &input_program,
+    let module = compile(
+        Box::leak(Box::new(input_program)),
         input_abi,
         runtime_library,
         CompilerConfig::new(
@@ -207,7 +201,8 @@ fn main() -> impl std::process::Termination {
         ),
     );
 
-    output_program
-        .serialize(&mut output)
+    let module_bytes = module.finish();
+    output
+        .write_all(&module_bytes)
         .expect("Failed to write module");
 }

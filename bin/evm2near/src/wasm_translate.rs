@@ -2,10 +2,17 @@
 
 use anyhow::{Error, Result};
 use wasm_encoder::*;
-use wasmparser::{BinaryReader, DataKind, ElementKind, FunctionBody, Global, Operator, Type};
+use wasmparser::{
+    for_each_operator, DataKind, ElementItems, ElementKind, ExternalKind, FunctionBody, Global,
+    Operator, Payload, Type,
+};
 
 pub type Params = Vec<ValType>;
 pub type Results = Vec<ValType>;
+pub struct Signature {
+    pub params: Params,
+    pub results: Results,
+}
 
 pub struct Import {
     module: String,
@@ -28,7 +35,7 @@ pub struct Export {
 }
 
 pub struct ModuleBuilder<'a> {
-    pub types: Vec<(Params, Results)>,
+    pub types: Vec<Signature>,
     pub imports: Vec<Import>,
     pub functions: Vec<TypeIndex>,
     pub tables: Vec<TableType>,
@@ -41,7 +48,7 @@ pub struct ModuleBuilder<'a> {
     pub data: Vec<DataSegment<'a, Vec<u8>>>,
 }
 
-impl ModuleBuilder<'_> {
+impl<'a> ModuleBuilder<'a> {
     fn new() -> Self {
         ModuleBuilder {
             types: Default::default(),
@@ -58,10 +65,31 @@ impl ModuleBuilder<'_> {
         }
     }
 
+    pub fn add_type(&mut self, sig: Signature) -> TypeIndex {
+        self.types.push(sig);
+        u32::try_from(self.types.len()).unwrap() - 1
+    }
+
+    pub fn add_function(&mut self, sig: Signature, body: Function) -> u32 {
+        let type_idx = self.add_type(sig);
+        self.functions.push(type_idx);
+        let sig_id = u32::try_from(self.functions.len()).unwrap() - 1;
+        self.code.push(body);
+        let code_id = u32::try_from(self.code.len()).unwrap() - 1;
+        assert_eq!(sig_id, code_id);
+        println!("added function with type id {type_idx}, func id {sig_id}");
+        sig_id
+    }
+
+    pub fn add_export(&mut self, export: Export) -> u32 {
+        self.exports.push(export);
+        u32::try_from(self.exports.len()).unwrap() - 1
+    }
+
     pub fn build(self) -> Module {
         let mut m = Module::new();
         let mut type_section = TypeSection::new();
-        for (params, results) in self.types {
+        for Signature { params, results } in self.types {
             type_section.function(params, results);
         }
         m.section(&type_section);
@@ -129,7 +157,7 @@ impl ModuleBuilder<'_> {
     }
 }
 
-pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
+pub fn parse<'a>(wasm: &'a Vec<u8>) -> Result<ModuleBuilder<'a>> {
     let parsed = wasmparser::Parser::new(0)
         .parse_all(wasm.as_slice())
         .map(|p| p.unwrap())
@@ -144,20 +172,20 @@ pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
     let mut builder = ModuleBuilder::new();
     for p in parsed {
         match p {
-            wasmparser::Payload::Version {
+            Payload::Version {
                 num: _version,
                 encoding,
                 range: _range,
             } => {
                 assert_eq!(encoding, wasmparser::Encoding::Module);
             }
-            wasmparser::Payload::TypeSection(type_section) => {
+            Payload::TypeSection(type_section) => {
                 for typ in type_section {
                     let (params, results) = t.type_def(typ?)?;
-                    builder.types.push((params, results));
+                    builder.types.push(Signature { params, results });
                 }
             }
-            wasmparser::Payload::ImportSection(import_section) => {
+            Payload::ImportSection(import_section) => {
                 for import in import_section {
                     let import = import?;
                     let typ = t.type_ref(import.ty)?;
@@ -168,39 +196,39 @@ pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
                     });
                 }
             }
-            wasmparser::Payload::FunctionSection(function_section) => {
+            Payload::FunctionSection(function_section) => {
                 for function in function_section {
                     builder.functions.push(function?);
                 }
             }
-            wasmparser::Payload::TableSection(table_section) => {
+            Payload::TableSection(table_section) => {
                 for table in table_section {
                     let table = table?;
                     let table_type = t.table_type(&table.ty)?; // todo TableInit is not used!
                     builder.tables.push(table_type);
                 }
             }
-            wasmparser::Payload::MemorySection(memory_section) => {
+            Payload::MemorySection(memory_section) => {
                 for mem in memory_section {
                     let mem = mem?;
                     let memory_type = t.memory_type(&mem)?;
                     builder.memories.push(memory_type);
                 }
             }
-            wasmparser::Payload::TagSection(tag_section) => {
+            Payload::TagSection(tag_section) => {
                 for tag in tag_section {
                     let tag = tag?;
                     let _tag_type = t.tag_type(&tag)?;
                     panic!("unspecified section (spec doesnt have that one! WTF)");
                 }
             }
-            wasmparser::Payload::GlobalSection(global_section) => {
+            Payload::GlobalSection(global_section) => {
                 for glob in global_section {
                     let (typ, init_instr) = t.global(glob?)?;
                     builder.globals.push(Glob { typ, init_instr });
                 }
             }
-            wasmparser::Payload::ExportSection(export_section) => {
+            Payload::ExportSection(export_section) => {
                 for export in export_section {
                     let export = export?;
                     builder.exports.push(Export {
@@ -210,64 +238,64 @@ pub fn parse(wasm: Vec<u8>) -> Result<ModuleBuilder<'static>> {
                     });
                 }
             }
-            wasmparser::Payload::StartSection {
+            Payload::StartSection {
                 func: function_index,
                 range: _range,
             } => {
                 let start_sect = wasm_encoder::StartSection { function_index };
                 builder.start_sect = Some(start_sect);
             }
-            wasmparser::Payload::ElementSection(element_section) => {
+            Payload::ElementSection(element_section) => {
                 for element in element_section {
                     let element_segment = t.element(element?)?;
                     builder.elements.push(element_segment);
                 }
             }
-            wasmparser::Payload::DataCountSection { count: _, range: _ } => {
+            Payload::DataCountSection { count: _, range: _ } => {
                 panic!("unspecified section (spec doesnt have that one! WTF)");
             }
-            wasmparser::Payload::DataSection(data_section) => {
+            Payload::DataSection(data_section) => {
                 for data in data_section {
                     let data_seg = t.data(data?)?;
                     builder.data.push(data_seg);
                 }
             }
-            wasmparser::Payload::CodeSectionStart {
+            Payload::CodeSectionStart {
                 count,
                 range: _,
                 size: _,
             } => {
                 code_section_size = Some(count);
             }
-            wasmparser::Payload::CodeSectionEntry(code_section_entry) => {
+            Payload::CodeSectionEntry(code_section_entry) => {
                 assert!(code_section_size.is_some());
                 let code_seg = t.code(code_section_entry)?;
                 builder.code.push(code_seg);
             }
-            wasmparser::Payload::ModuleSection {
+            Payload::ModuleSection {
                 parser: _,
                 range: _,
             } => todo!(),
-            wasmparser::Payload::InstanceSection(_) => todo!(),
-            wasmparser::Payload::CoreTypeSection(_) => todo!(),
-            wasmparser::Payload::ComponentSection {
+            Payload::InstanceSection(_) => todo!(),
+            Payload::CoreTypeSection(_) => todo!(),
+            Payload::ComponentSection {
                 parser: _,
                 range: _,
             } => todo!(),
-            wasmparser::Payload::ComponentInstanceSection(_) => todo!(),
-            wasmparser::Payload::ComponentAliasSection(_) => todo!(),
-            wasmparser::Payload::ComponentTypeSection(_) => todo!(),
-            wasmparser::Payload::ComponentCanonicalSection(_) => todo!(),
-            wasmparser::Payload::ComponentStartSection { start: _, range: _ } => todo!(),
-            wasmparser::Payload::ComponentImportSection(_) => todo!(),
-            wasmparser::Payload::ComponentExportSection(_) => todo!(),
-            wasmparser::Payload::CustomSection(_) => todo!(),
-            wasmparser::Payload::UnknownSection {
+            Payload::ComponentInstanceSection(_) => todo!(),
+            Payload::ComponentAliasSection(_) => todo!(),
+            Payload::ComponentTypeSection(_) => todo!(),
+            Payload::ComponentCanonicalSection(_) => todo!(),
+            Payload::ComponentStartSection { start: _, range: _ } => todo!(),
+            Payload::ComponentImportSection(_) => todo!(),
+            Payload::ComponentExportSection(_) => todo!(),
+            Payload::CustomSection(_) => todo!(),
+            Payload::UnknownSection {
                 id: _,
                 contents: _,
                 range: _,
             } => todo!(),
-            wasmparser::Payload::End(_end) => {}
+            Payload::End(_end) => {}
         }
     }
 
@@ -290,7 +318,7 @@ pub enum ConstExprKind {
 
 pub struct Translator;
 
-impl Translator {
+impl<'a> Translator {
     fn type_ref(&self, type_ref: wasmparser::TypeRef) -> Result<wasm_encoder::EntityType> {
         match type_ref {
             wasmparser::TypeRef::Func(f) => Ok(EntityType::Function(f)),
@@ -334,13 +362,13 @@ impl Translator {
         }
     }
 
-    pub fn ext_kind(&self, ekind: wasmparser::ExternalKind) -> ExportKind {
+    pub fn ext_kind(&self, ekind: ExternalKind) -> ExportKind {
         match ekind {
-            wasmparser::ExternalKind::Func => ExportKind::Func,
-            wasmparser::ExternalKind::Table => ExportKind::Table,
-            wasmparser::ExternalKind::Memory => ExportKind::Memory,
-            wasmparser::ExternalKind::Global => ExportKind::Global,
-            wasmparser::ExternalKind::Tag => ExportKind::Tag,
+            ExternalKind::Func => ExportKind::Func,
+            ExternalKind::Table => ExportKind::Table,
+            ExternalKind::Memory => ExportKind::Memory,
+            ExternalKind::Global => ExportKind::Global,
+            ExternalKind::Tag => ExportKind::Tag,
         }
     }
 
@@ -445,8 +473,8 @@ impl Translator {
         Ok(wasm_encoder::ConstExpr::raw(offset_bytes))
     }
 
-    pub fn element(&self, element: wasmparser::Element<'_>) -> Result<ElementSegment> {
-        let mode: ElementMode<'static> = match &element.kind {
+    pub fn element<'b: 'a>(&'a self, element: wasmparser::Element<'b>) -> Result<ElementSegment> {
+        let mode: ElementMode<'a> = match &element.kind {
             ElementKind::Active {
                 table_index,
                 offset_expr,
@@ -463,12 +491,12 @@ impl Translator {
         };
         let element_type = self.refty(&element.ty)?;
         let elements = match element.items {
-            wasmparser::ElementItems::Functions(reader) => {
+            ElementItems::Functions(reader) => {
                 let functions = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
                 let functions_box = Box::new(functions);
                 Elements::Functions(Box::leak(functions_box))
             }
-            wasmparser::ElementItems::Expressions(reader) => {
+            ElementItems::Expressions(reader) => {
                 let exprs = reader
                     .into_iter()
                     .map(|f| self.const_expr(&f?, ConstExprKind::ElementFunction))
@@ -485,7 +513,7 @@ impl Translator {
     }
 
     #[allow(unused_variables)]
-    pub fn op(&self, op: &Operator<'_>) -> Result<Instruction<'static>> {
+    pub fn op(&self, op: &Operator<'_>) -> Result<Instruction<'a>> {
         use wasm_encoder::Instruction as I;
 
         macro_rules! translate {
@@ -564,7 +592,7 @@ impl Translator {
             (build $op:ident $($arg:ident)*) => (I::$op { $($arg),* });
         }
 
-        wasmparser::for_each_operator!(translate)
+        for_each_operator!(translate)
     }
 
     pub fn block_type(&self, ty: &wasmparser::BlockType) -> Result<BlockType> {
@@ -583,8 +611,8 @@ impl Translator {
         })
     }
 
-    pub fn data(&self, data: wasmparser::Data<'_>) -> Result<DataSegment<Vec<u8>>> {
-        let mode: DataSegmentMode<'static> = match &data.kind {
+    pub fn data<'b: 'a>(&'a self, data: wasmparser::Data<'b>) -> Result<DataSegment<Vec<u8>>> {
+        let mode: DataSegmentMode<'a> = match &data.kind {
             DataKind::Active {
                 memory_index,
                 offset_expr,

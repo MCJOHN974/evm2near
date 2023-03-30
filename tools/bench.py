@@ -112,8 +112,8 @@ if __name__ == "__main__":
 
     print(f"Mean = {mean}\nVariance = {variance}")
    
-    UPPER_BOUND_MEAN = 203.5
-    LOWER_BOUND_MEAN = 204.5
+    UPPER_BOUND_MEAN = 204.5
+    LOWER_BOUND_MEAN = 203.5
 
     # I runned code three times and values was 109.6, 77.7, 49.3, so this bounds will be changed soon, I think
     UPPER_BOUND_VARIANCE = 0.1

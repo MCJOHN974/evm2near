@@ -656,12 +656,6 @@ impl<'a> Translator {
                     memory_index: *memory_index,
                     offset_instr,
                 }
-                // let offset = self.const_expr(offset_expr, ConstExprKind::DataOffset)?;
-                // let offset_box = Box::new(offset);
-                // DataSegmentMode::Active {
-                //     memory_index: *memory_index,
-                //     offset: Box::leak(offset_box), // todo satisfy static lifetime for the `mode` binding
-                // }
             }
             DataKind::Passive => DataMode::Passive,
         };

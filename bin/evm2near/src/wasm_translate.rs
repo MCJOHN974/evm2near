@@ -77,7 +77,6 @@ impl<'a> ModuleBuilder<'a> {
         self.code.push(body);
         let code_id = u32::try_from(self.code.len()).unwrap() - 1;
         assert_eq!(sig_id, code_id);
-        println!("added function with type id {type_idx}, func id {sig_id}");
         sig_id
     }
 

@@ -73,8 +73,6 @@ pub fn compile<'a>(
     compiler.emit_abi_execute();
     let abi_data = compiler.emit_abi_methods(input_abi).unwrap();
 
-    let mut output_module = compiler.builder.build();
-
     // TODO RESTORE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     // let tables = output_module.table_section_mut().unwrap().entries_mut();
     // tables[0] = TableType::new(0xFFFF, Some(0xFFFF)); // grow the table to 65,535 elements
@@ -97,7 +95,7 @@ pub fn compile<'a>(
     //         break; // found it
     //     }
     // }
-    output_module
+    compiler.builder.build()
 }
 
 type DataOffset = i32;
@@ -562,14 +560,14 @@ subgraph cluster_wasm {{ label = \"wasm\"
             func_body.instruction(&instr);
         }
 
-        let func_idx = self.builder.add_function(func_sig, func_body);
+        let imports_len = u32::try_from(self.builder.imports.len()).unwrap();
+        let func_idx = self.builder.add_function(func_sig, func_body) + imports_len;
 
         if let Some(name) = name {
-            let imports_len = u32::try_from(self.builder.imports.len()).unwrap();
             let func_export = Export {
                 name,
                 kind: ExportKind::Func,
-                index: func_idx + imports_len,
+                index: func_idx,
             };
             let _ = self.builder.add_export(func_export);
         }

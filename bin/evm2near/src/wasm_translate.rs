@@ -34,6 +34,19 @@ pub struct Export {
     pub index: u32,
 }
 
+pub enum DataMode<'a> {
+    Active {
+        memory_index: u32,
+        offset_instr: Instruction<'a>,
+    },
+    Passive,
+}
+
+pub struct Data<'a> {
+    pub mode: DataMode<'a>,
+    pub data: Vec<u8>,
+}
+
 pub struct ModuleBuilder<'a> {
     pub types: Vec<Signature>,
     pub imports: Vec<Import>,
@@ -45,7 +58,7 @@ pub struct ModuleBuilder<'a> {
     pub start_sect: Option<StartSection>,
     pub elements: Vec<ElementSegment<'a>>,
     pub code: Vec<Function>,
-    pub data: Vec<DataSegment<'a, Vec<u8>>>,
+    pub data: Vec<Data<'a>>,
 }
 
 impl<'a> ModuleBuilder<'a> {
@@ -148,7 +161,24 @@ impl<'a> ModuleBuilder<'a> {
 
         let mut data_section = DataSection::new();
         for d in self.data {
-            data_section.segment(d);
+            let mode = match d.mode {
+                DataMode::Active {
+                    memory_index,
+                    offset_instr: offset,
+                } => {
+                    let mut instr_buf = vec![];
+                    offset.encode(&mut instr_buf);
+                    Instruction::End.encode(&mut instr_buf);
+                    let expr = Box::leak(Box::new(ConstExpr::raw(instr_buf)));
+                    DataSegmentMode::Active {
+                        memory_index,
+                        offset: expr,
+                    }
+                }
+                DataMode::Passive => DataSegmentMode::Passive,
+            };
+            let data_segment = DataSegment { mode, data: d.data };
+            data_section.segment(data_segment);
         }
         m.section(&data_section);
 
@@ -430,11 +460,11 @@ impl<'a> Translator {
 
     pub fn global(&self, global: Global) -> Result<(GlobalType, Instruction)> {
         let ty = self.global_type(&global.ty)?;
-        let instr = self.global_const_expr(&global.init_expr)?;
+        let instr = self.const_instr_const_expr(&global.init_expr)?;
         Ok((ty, instr))
     }
 
-    pub fn global_const_expr(&self, e: &wasmparser::ConstExpr<'_>) -> Result<Instruction> {
+    pub fn const_instr_const_expr(&self, e: &wasmparser::ConstExpr<'_>) -> Result<Instruction> {
         let mut e = e.get_operators_reader();
         let op = e.read()?;
         let instruction = self.op(&op)?;
@@ -610,23 +640,28 @@ impl<'a> Translator {
         })
     }
 
-    pub fn data<'b: 'a>(&'a self, data: wasmparser::Data<'b>) -> Result<DataSegment<Vec<u8>>> {
-        let mode: DataSegmentMode<'a> = match &data.kind {
+    pub fn data<'b: 'a>(&'a self, data: wasmparser::Data<'b>) -> Result<Data> {
+        let mode: DataMode<'a> = match &data.kind {
             DataKind::Active {
                 memory_index,
                 offset_expr,
             } => {
-                let offset = self.const_expr(offset_expr, ConstExprKind::DataOffset)?;
-                let offset_box = Box::new(offset);
-                DataSegmentMode::Active {
+                let offset_instr = self.const_instr_const_expr(offset_expr)?;
+                DataMode::Active {
                     memory_index: *memory_index,
-                    offset: Box::leak(offset_box), // todo satisfy static lifetime for the `mode` binding
+                    offset_instr,
                 }
+                // let offset = self.const_expr(offset_expr, ConstExprKind::DataOffset)?;
+                // let offset_box = Box::new(offset);
+                // DataSegmentMode::Active {
+                //     memory_index: *memory_index,
+                //     offset: Box::leak(offset_box), // todo satisfy static lifetime for the `mode` binding
+                // }
             }
-            DataKind::Passive => DataSegmentMode::Passive,
+            DataKind::Passive => DataMode::Passive,
         };
         let data = data.data.to_vec();
-        Ok(DataSegment { mode, data })
+        Ok(Data { mode, data })
     }
 
     pub fn code(&self, body: FunctionBody<'_>) -> Result<Function> {

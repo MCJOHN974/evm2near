@@ -19,7 +19,7 @@ use crate::{
     analyze::{basic_cfg, BasicCfg, CfgNode, Idx, Offs},
     config::CompilerConfig,
     encode::encode_push,
-    wasm_translate::{Export, ModuleBuilder, Signature},
+    wasm_translate::{DataMode, Export, ModuleBuilder, Signature},
 };
 
 const TABLE_OFFSET: i32 = 0x1000;
@@ -73,28 +73,29 @@ pub fn compile<'a>(
     compiler.emit_abi_execute();
     let abi_data = compiler.emit_abi_methods(input_abi).unwrap();
 
-    // TODO RESTORE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // let tables = output_module.table_section_mut().unwrap().entries_mut();
-    // tables[0] = TableType::new(0xFFFF, Some(0xFFFF)); // grow the table to 65,535 elements
+    let table = compiler.builder.tables.get_mut(0).unwrap();
+    table.minimum = 0xFFFF; // grow the table to 65,535 elements
+    table.maximum = Some(0xFFFF);
 
-    // // Overwrite the `_abi_buffer` data segment in evmlib with the ABI data
-    // // (function parameter names and types) for all public Solidity contract
-    // // methods:
-    // let abi_buffer_ptr: usize = compiler.abi_buffer_off.try_into().unwrap();
-    // for data in output_module.data_section_mut().unwrap().entries_mut() {
-    //     let min_ptr: usize = match data.offset().as_ref().unwrap().code() {
-    //         [Instruction::I32Const(off), Instruction::End] => (*off).try_into().unwrap(),
-    //         _ => continue, // skip any nonstandard data segments
-    //     };
-    //     let max_ptr: usize = min_ptr + data.value().len();
-    //     if abi_buffer_ptr >= min_ptr && abi_buffer_ptr < max_ptr {
-    //         let min_off = abi_buffer_ptr - min_ptr;
-    //         let max_off = min_off + abi_data.len();
-    //         assert!(min_ptr + max_off <= max_ptr);
-    //         data.value_mut()[min_off..max_off].copy_from_slice(&abi_data);
-    //         break; // found it
-    //     }
-    // }
+    let abi_buffer_ptr: usize = compiler.abi_buffer_off.try_into().unwrap();
+    for data in compiler.builder.data.iter_mut() {
+        let min_ptr: usize = match data.mode {
+            DataMode::Active {
+                memory_index: _,
+                offset_instr: Instruction::I32Const(off),
+            } => off.try_into().unwrap(),
+            _ => continue,
+        };
+        let max_ptr: usize = min_ptr + data.data.len();
+
+        if abi_buffer_ptr >= min_ptr && abi_buffer_ptr < max_ptr {
+            let min_off = abi_buffer_ptr - min_ptr;
+            let max_off = min_off + abi_data.len();
+            assert!(min_ptr + max_off <= max_ptr);
+            data.data[min_off..max_off].copy_from_slice(&abi_data);
+            break; // found it
+        }
+    }
     compiler.builder.build()
 }
 
@@ -114,7 +115,6 @@ struct Compiler<'a> {
     evm_pop_function: FunctionIndex,       // _evm_pop_u32
     evm_burn_gas: FunctionIndex,           // _evm_burn_gas
     evm_pc_function: FunctionIndex,        // _evm_set_pc
-    // function_import_count: usize,
     builder: ModuleBuilder<'a>,
 }
 
@@ -135,7 +135,6 @@ impl<'a> Compiler<'a> {
             evm_pop_function: find_runtime_function(&runtime_library, "_evm_pop_u32").unwrap(),
             evm_burn_gas: find_runtime_function(&runtime_library, "_evm_burn_gas").unwrap(),
             evm_pc_function: find_runtime_function(&runtime_library, "_evm_set_pc").unwrap(),
-            // function_import_count: runtime_library.import_count(ImportCountType::Function),
             builder: runtime_library,
         }
     }

@@ -168,7 +168,6 @@ impl<'a> ModuleBuilder<'a> {
                 } => {
                     let mut instr_buf = vec![];
                     offset.encode(&mut instr_buf);
-                    Instruction::End.encode(&mut instr_buf);
                     let expr = Box::leak(Box::new(ConstExpr::raw(instr_buf)));
                     DataSegmentMode::Active {
                         memory_index,

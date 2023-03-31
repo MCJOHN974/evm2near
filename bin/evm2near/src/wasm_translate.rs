@@ -64,7 +64,7 @@ pub struct ModuleBuilder<'a> {
     pub globals: Vec<Glob<'a>>,
     pub exports: Vec<Export>,
     pub start_sect: Option<StartSection>,
-    pub elements: Vec<ElementSegment<'a>>,
+    pub elements: Vec<owned_element_segment::ElementSegment>,
     pub code: Vec<Function>,
     pub data: Vec<Data<'a>>,
 }
@@ -157,7 +157,7 @@ impl<'a> ModuleBuilder<'a> {
 
         let mut element_section = ElementSection::new();
         for e in self.elements {
-            element_section.segment(e);
+            element_section.segment(e.borrowed());
         }
         m.section(&element_section);
 
@@ -168,6 +168,9 @@ impl<'a> ModuleBuilder<'a> {
         m.section(&code_section);
 
         let mut data_section = DataSection::new();
+        // Buffer to hold the `ConstExpr` objects representing the
+        // `DataSegmentMode::Active` offsets
+        let mut offsets = Vec::new();
         for d in self.data {
             let mode = match d.mode {
                 DataMode::Active {
@@ -176,10 +179,12 @@ impl<'a> ModuleBuilder<'a> {
                 } => {
                     let mut instr_buf = vec![];
                     offset.encode(&mut instr_buf);
-                    let expr = Box::leak(Box::new(ConstExpr::raw(instr_buf)));
+                    let expr = ConstExpr::raw(instr_buf);
+                    offsets.push(expr);
+                    let n = offsets.len() - 1;
                     DataSegmentMode::Active {
                         memory_index,
-                        offset: expr,
+                        offset: &offsets[n],
                     }
                 }
                 DataMode::Passive => DataSegmentMode::Passive,
@@ -199,9 +204,7 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
         .map(|p| p.unwrap())
         .collect::<Vec<_>>();
 
-    let translator = Translator;
-    let t_b = Box::new(translator);
-    let t = Box::leak(t_b); //todo remove that garbage
+    let t = Translator;
 
     let mut code_section_size: Option<u32> = None;
 
@@ -463,13 +466,16 @@ impl<'a> Translator {
         }
     }
 
-    pub fn global(&self, global: Global) -> Result<(GlobalType, Instruction)> {
+    pub fn global<'b>(&self, global: Global<'b>) -> Result<(GlobalType, Instruction<'b>)> {
         let ty = self.global_type(&global.ty)?;
-        let instr = self.const_instr_const_expr(&global.init_expr)?;
+        let instr = self.const_instr_const_expr(global.init_expr)?;
         Ok((ty, instr))
     }
 
-    pub fn const_instr_const_expr(&self, e: &wasmparser::ConstExpr<'_>) -> Result<Instruction> {
+    pub fn const_instr_const_expr<'b>(
+        &self,
+        e: wasmparser::ConstExpr<'b>,
+    ) -> Result<Instruction<'b>> {
         let mut e = e.get_operators_reader();
         let op = e.read()?;
         let instruction = self.op(&op)?;
@@ -480,9 +486,9 @@ impl<'a> Translator {
         Ok(instruction)
     }
 
-    pub fn const_expr(
-        &self,
-        e: &wasmparser::ConstExpr<'_>,
+    pub fn const_expr<'b>(
+        &'a self,
+        e: wasmparser::ConstExpr<'b>,
         ctx: ConstExprKind,
     ) -> Result<wasm_encoder::ConstExpr> {
         let mut e = e.get_operators_reader();
@@ -507,39 +513,39 @@ impl<'a> Translator {
         Ok(wasm_encoder::ConstExpr::raw(offset_bytes))
     }
 
-    pub fn element<'b: 'a>(&'a self, element: wasmparser::Element<'b>) -> Result<ElementSegment> {
-        let mode: ElementMode<'a> = match &element.kind {
+    pub fn element<'b>(
+        &'a self,
+        element: wasmparser::Element<'b>,
+    ) -> Result<owned_element_segment::ElementSegment> {
+        let mode = match element.kind {
             ElementKind::Active {
                 table_index,
                 offset_expr,
             } => {
                 let offset = self.const_expr(offset_expr, ConstExprKind::ElementOffset)?;
-                let offset_box = Box::new(offset);
-                ElementMode::Active {
-                    table: Some(*table_index),
-                    offset: Box::leak(offset_box),
+                owned_element_segment::ElementMode::Active {
+                    table: Some(table_index),
+                    offset,
                 }
             }
-            ElementKind::Passive => ElementMode::Passive,
-            ElementKind::Declared => ElementMode::Declared,
+            ElementKind::Passive => owned_element_segment::ElementMode::Passive,
+            ElementKind::Declared => owned_element_segment::ElementMode::Declared,
         };
         let element_type = self.refty(&element.ty)?;
         let elements = match element.items {
             ElementItems::Functions(reader) => {
                 let functions = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
-                let functions_box = Box::new(functions);
-                Elements::Functions(Box::leak(functions_box))
+                owned_element_segment::Elements::Functions(functions)
             }
             ElementItems::Expressions(reader) => {
                 let exprs = reader
                     .into_iter()
-                    .map(|f| self.const_expr(&f?, ConstExprKind::ElementFunction))
+                    .map(|f| self.const_expr(f?, ConstExprKind::ElementFunction))
                     .collect::<Result<Vec<_>, _>>()?;
-                let exprs_box = Box::new(exprs);
-                Elements::Expressions(Box::leak(exprs_box))
+                owned_element_segment::Elements::Expressions(exprs)
             }
         };
-        Ok(ElementSegment {
+        Ok(owned_element_segment::ElementSegment {
             mode,
             element_type,
             elements,
@@ -645,15 +651,15 @@ impl<'a> Translator {
         })
     }
 
-    pub fn data<'b: 'a>(&'a self, data: wasmparser::Data<'b>) -> Result<Data> {
-        let mode: DataMode<'a> = match &data.kind {
+    pub fn data<'b>(&'a self, data: wasmparser::Data<'b>) -> Result<Data<'b>> {
+        let mode: DataMode<'b> = match data.kind {
             DataKind::Active {
                 memory_index,
                 offset_expr,
             } => {
                 let offset_instr = self.const_instr_const_expr(offset_expr)?;
                 DataMode::Active {
-                    memory_index: *memory_index,
+                    memory_index,
                     offset_instr,
                 }
             }
@@ -681,5 +687,65 @@ impl<'a> Translator {
             func.instruction(&self.op(&op)?);
         }
         Ok(func)
+    }
+}
+
+/// Contains types equivalent to `wasm_encoder::elements`, but with the data being owned
+/// instead of borrowed. Conversion between the types declared in this module and those
+/// in `wasm_encoder::elements` is available via the `borrowed` method on each type.
+pub mod owned_element_segment {
+    #[derive(Debug)]
+    pub struct ElementSegment {
+        pub mode: ElementMode,
+        pub element_type: wasm_encoder::RefType,
+        pub elements: Elements,
+    }
+
+    impl ElementSegment {
+        pub fn borrowed(&self) -> wasm_encoder::ElementSegment {
+            wasm_encoder::ElementSegment {
+                mode: self.mode.borrowed(),
+                element_type: self.element_type,
+                elements: self.elements.borrowed(),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum ElementMode {
+        Passive,
+        Declared,
+        Active {
+            table: Option<u32>,
+            offset: wasm_encoder::ConstExpr,
+        },
+    }
+
+    impl ElementMode {
+        pub fn borrowed(&self) -> wasm_encoder::ElementMode {
+            match self {
+                Self::Passive => wasm_encoder::ElementMode::Passive,
+                Self::Declared => wasm_encoder::ElementMode::Declared,
+                Self::Active { table, offset } => wasm_encoder::ElementMode::Active {
+                    table: *table,
+                    offset,
+                },
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum Elements {
+        Functions(Vec<u32>),
+        Expressions(Vec<wasm_encoder::ConstExpr>),
+    }
+
+    impl Elements {
+        pub fn borrowed(&self) -> wasm_encoder::Elements {
+            match self {
+                Self::Functions(xs) => wasm_encoder::Elements::Functions(xs),
+                Self::Expressions(xs) => wasm_encoder::Elements::Expressions(xs),
+            }
+        }
     }
 }

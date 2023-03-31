@@ -362,8 +362,7 @@ impl<'a> Compiler<'a> {
 
                     res.push(Instruction::Block(BlockType::Empty));
                     res.push(Instruction::Call(self.evm_pop_function));
-                    let l_l = Box::leak(Box::new(linear_table)); // TODO DIRTY HACK
-                    let br_table = Instruction::BrTable(Cow::Borrowed(l_l.as_slice()), 0);
+                    let br_table = Instruction::BrTable(Cow::Owned(linear_table), 0);
                     res.push(br_table);
                     res.push(Instruction::End);
                     res.push(Instruction::Unreachable);

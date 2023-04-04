@@ -153,11 +153,21 @@ impl<'a> ModuleBuilder<'a> {
         }
         m.section(&export_section);
 
-        self.start_sect.map(|start_sect| m.section(&start_sect));
+        if let Some(start_sect) = self.start_sect {
+            m.section(&start_sect);
+        }
 
         let mut element_section = ElementSection::new();
         for e in self.elements {
-            element_section.segment(e);
+            let mut modified = e;
+            if let ElementMode::Active {
+                ref mut table,
+                offset: _,
+            } = modified.mode
+            {
+                *table = None; // seems like near runtime does not support multiple tables. at least it definitely does not respect any table indexes there
+            }
+            element_section.segment(modified);
         }
         m.section(&element_section);
 

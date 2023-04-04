@@ -73,10 +73,6 @@ pub fn compile<'a>(
     compiler.emit_abi_execute();
     let abi_data = compiler.emit_abi_methods(input_abi).unwrap();
 
-    let table = compiler.builder.tables.get_mut(0).unwrap();
-    table.minimum = 0xFFFF; // grow the table to 65,535 elements
-    table.maximum = Some(0xFFFF);
-
     let abi_buffer_ptr: usize = compiler.abi_buffer_off.try_into().unwrap();
     for data in compiler.builder.data.iter_mut() {
         let min_ptr: usize = match data.mode {

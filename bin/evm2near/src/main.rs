@@ -178,8 +178,7 @@ fn main() -> impl std::process::Termination {
         OutputABI::Wasi => runtime_wasi.to_vec(),
     };
 
-    let mut t = wasm_translate::Translator::new();
-    let runtime_library = t.parse(&current_runtime).unwrap();
+    let runtime_library = wasm_translate::parse(&current_runtime).unwrap();
 
     let module = compile(
         &input_program,

@@ -19,7 +19,7 @@ use crate::{
     analyze::{basic_cfg, BasicCfg, CfgNode, Idx, Offs},
     config::CompilerConfig,
     encode::encode_push,
-    wasm_translate::{DataMode, Export, ModuleBuilder, Signature},
+    wasm_translate::{translator::DataMode, Export, ModuleBuilder, Signature},
 };
 
 const TABLE_OFFSET: i32 = 0x1000;

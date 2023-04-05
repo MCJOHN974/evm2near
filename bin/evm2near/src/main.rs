@@ -181,7 +181,7 @@ fn main() -> impl std::process::Termination {
     let runtime_library = wasm_translate::parse(&current_runtime).unwrap();
 
     let module = compile(
-        Box::leak(Box::new(input_program)),
+        &input_program,
         input_abi,
         runtime_library,
         CompilerConfig::new(

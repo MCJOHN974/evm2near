@@ -186,10 +186,11 @@ impl<'a> ModuleBuilder<'a> {
                 } => {
                     let mut instr_buf = vec![];
                     offset.encode(&mut instr_buf);
-                    let expr = Box::leak(Box::new(ConstExpr::raw(instr_buf)));
+                    let offset_constexpr = ConstExpr::raw(instr_buf);
+                    let expr_ref = Box::leak(Box::new(offset_constexpr));
                     DataSegmentMode::Active {
                         memory_index,
-                        offset: expr,
+                        offset: expr_ref,
                     }
                 }
                 DataMode::Passive => DataSegmentMode::Passive,
@@ -523,11 +524,11 @@ impl<'a> Translator {
                 table_index,
                 offset_expr,
             } => {
-                let offset = self.const_expr(offset_expr, ConstExprKind::ElementOffset)?;
-                let offset_box = Box::new(offset);
+                let offset_constexpr =
+                    self.const_expr(offset_expr, ConstExprKind::ElementOffset)?;
                 ElementMode::Active {
                     table: Some(*table_index),
-                    offset: Box::leak(offset_box),
+                    offset: Box::leak(Box::new(offset_constexpr)),
                 }
             }
             ElementKind::Passive => ElementMode::Passive,
@@ -537,16 +538,14 @@ impl<'a> Translator {
         let elements = match element.items {
             ElementItems::Functions(reader) => {
                 let functions = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
-                let functions_box = Box::new(functions);
-                Elements::Functions(Box::leak(functions_box))
+                Elements::Functions(Box::leak(Box::new(functions)))
             }
             ElementItems::Expressions(reader) => {
                 let exprs = reader
                     .into_iter()
                     .map(|f| self.const_expr(&f?, ConstExprKind::ElementFunction))
                     .collect::<Result<Vec<_>, _>>()?;
-                let exprs_box = Box::new(exprs);
-                Elements::Expressions(Box::leak(exprs_box))
+                Elements::Expressions(Box::leak(Box::new(exprs)))
             }
         };
         Ok(ElementSegment {

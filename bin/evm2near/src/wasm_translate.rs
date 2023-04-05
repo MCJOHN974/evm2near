@@ -1,11 +1,8 @@
 // grabbed from https://github.com/bytecodealliance/wasm-tools/blob/main/crates/wasm-mutate/src/mutators/translate.rs
 
-use anyhow::{Error, Result};
+use anyhow::Result;
 use wasm_encoder::*;
-use wasmparser::{
-    for_each_operator, DataKind, ElementItems, ElementKind, ExternalKind, FunctionBody, Global,
-    Operator, Payload, Type,
-};
+use wasmparser::Payload;
 
 pub type Params = Vec<ValType>;
 pub type Results = Vec<ValType>;
@@ -187,10 +184,9 @@ impl<'a> ModuleBuilder<'a> {
                     let mut instr_buf = vec![];
                     offset.encode(&mut instr_buf);
                     let offset_constexpr = ConstExpr::raw(instr_buf);
-                    let expr_ref = Box::leak(Box::new(offset_constexpr));
                     DataSegmentMode::Active {
                         memory_index,
-                        offset: expr_ref,
+                        offset: Box::leak(Box::new(offset_constexpr)),
                     }
                 }
                 DataMode::Passive => DataSegmentMode::Passive,
@@ -210,10 +206,6 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
         .map(|p| p.unwrap())
         .collect::<Vec<_>>();
 
-    let translator = Translator;
-    let t_b = Box::new(translator);
-    let t = Box::leak(t_b); //todo remove that garbage
-
     let mut code_section_size: Option<u32> = None;
 
     let mut builder = ModuleBuilder::new();
@@ -228,14 +220,14 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
             }
             Payload::TypeSection(type_section) => {
                 for typ in type_section {
-                    let (params, results) = t.type_def(typ?)?;
+                    let (params, results) = translator::type_def(typ?)?;
                     builder.types.push(Signature { params, results });
                 }
             }
             Payload::ImportSection(import_section) => {
                 for import in import_section {
                     let import = import?;
-                    let typ = t.type_ref(import.ty)?;
+                    let typ = translator::type_ref(import.ty)?;
                     builder.imports.push(Import {
                         module: import.module.to_string(),
                         field: import.name.to_string(),
@@ -251,27 +243,27 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
             Payload::TableSection(table_section) => {
                 for table in table_section {
                     let table = table?;
-                    let table_type = t.table_type(&table.ty)?; // todo TableInit is not used!
+                    let table_type = translator::table_type(&table.ty)?; // todo TableInit is not used!
                     builder.tables.push(table_type);
                 }
             }
             Payload::MemorySection(memory_section) => {
                 for mem in memory_section {
                     let mem = mem?;
-                    let memory_type = t.memory_type(&mem)?;
+                    let memory_type = translator::memory_type(&mem)?;
                     builder.memories.push(memory_type);
                 }
             }
             Payload::TagSection(tag_section) => {
                 for tag in tag_section {
                     let tag = tag?;
-                    let _tag_type = t.tag_type(&tag)?;
+                    let _tag_type = translator::tag_type(&tag)?;
                     panic!("unspecified section (spec doesnt have that one! WTF)");
                 }
             }
             Payload::GlobalSection(global_section) => {
                 for glob in global_section {
-                    let (typ, init_instr) = t.global(glob?)?;
+                    let (typ, init_instr) = translator::global(glob?)?;
                     builder.globals.push(Glob { typ, init_instr });
                 }
             }
@@ -280,7 +272,7 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
                     let export = export?;
                     builder.exports.push(Export {
                         name: export.name.to_string(),
-                        kind: t.ext_kind(export.kind),
+                        kind: translator::ext_kind(export.kind),
                         index: export.index,
                     });
                 }
@@ -294,7 +286,7 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
             }
             Payload::ElementSection(element_section) => {
                 for element in element_section {
-                    let element_segment = t.element(element?)?;
+                    let element_segment = translator::element(element?)?;
                     builder.elements.push(element_segment);
                 }
             }
@@ -303,7 +295,7 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
             }
             Payload::DataSection(data_section) => {
                 for data in data_section {
-                    let data_seg = t.data(data?)?;
+                    let data_seg = translator::data(data?)?;
                     builder.data.push(data_seg);
                 }
             }
@@ -316,7 +308,7 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
             }
             Payload::CodeSectionEntry(code_section_entry) => {
                 assert!(code_section_size.is_some());
-                let code_seg = t.code(code_section_entry)?;
+                let code_seg = translator::code(code_section_entry)?;
                 builder.code.push(code_seg);
             }
             Payload::ModuleSection {
@@ -361,14 +353,25 @@ pub enum ConstExprKind {
     ElementFunction,
 }
 
-pub struct Translator;
+mod translator {
+    use anyhow::{Error, Result};
+    use wasm_encoder::{
+        BlockType, ElementMode, ElementSegment, Elements, Encode, EntityType, ExportKind, Function,
+        GlobalType, HeapType, Instruction, MemArg, MemoryType, RefType, TableType, TagKind,
+        ValType,
+    };
+    use wasmparser::{
+        for_each_operator, ConstExpr, DataKind, ElementItems, ElementKind, ExternalKind,
+        FunctionBody, Operator, Type,
+    };
 
-impl<'a> Translator {
-    fn type_ref(&self, type_ref: wasmparser::TypeRef) -> Result<wasm_encoder::EntityType> {
+    use super::{ConstExprKind, Data, DataMode};
+
+    pub fn type_ref(type_ref: wasmparser::TypeRef) -> Result<wasm_encoder::EntityType> {
         match type_ref {
             wasmparser::TypeRef::Func(f) => Ok(EntityType::Function(f)),
             wasmparser::TypeRef::Table(t) => {
-                let element_type = self.refty(&t.element_type)?;
+                let element_type = refty(&t.element_type)?;
                 Ok(EntityType::Table(TableType {
                     element_type,
                     minimum: t.initial,
@@ -382,32 +385,24 @@ impl<'a> Translator {
                 shared: m.shared,
             })),
             wasmparser::TypeRef::Global(g) => Ok(EntityType::Global(GlobalType {
-                val_type: self.ty(&g.content_type)?,
+                val_type: ty(&g.content_type)?,
                 mutable: g.mutable,
             })),
-            wasmparser::TypeRef::Tag(t) => Ok(EntityType::Tag(self.tag_type(&t)?)),
+            wasmparser::TypeRef::Tag(t) => Ok(EntityType::Tag(tag_type(&t)?)),
         }
     }
 
-    pub fn type_def(&self, ty: Type) -> Result<(Vec<ValType>, Vec<ValType>)> {
-        match ty {
+    pub fn type_def(typ: Type) -> Result<(Vec<ValType>, Vec<ValType>)> {
+        match typ {
             Type::Func(f) => {
-                let params = f
-                    .params()
-                    .iter()
-                    .map(|ty| self.ty(ty))
-                    .collect::<Result<Vec<_>>>()?;
-                let results = f
-                    .results()
-                    .iter()
-                    .map(|ty| self.ty(ty))
-                    .collect::<Result<Vec<_>>>()?;
+                let params = f.params().iter().map(ty).collect::<Result<Vec<_>>>()?;
+                let results = f.results().iter().map(ty).collect::<Result<Vec<_>>>()?;
                 Ok((params, results))
             }
         }
     }
 
-    pub fn ext_kind(&self, ekind: ExternalKind) -> ExportKind {
+    pub fn ext_kind(ekind: ExternalKind) -> ExportKind {
         match ekind {
             ExternalKind::Func => ExportKind::Func,
             ExternalKind::Table => ExportKind::Table,
@@ -417,15 +412,15 @@ impl<'a> Translator {
         }
     }
 
-    pub fn table_type(&self, ty: &wasmparser::TableType) -> Result<wasm_encoder::TableType> {
+    pub fn table_type(ty: &wasmparser::TableType) -> Result<wasm_encoder::TableType> {
         Ok(wasm_encoder::TableType {
-            element_type: self.refty(&ty.element_type)?,
+            element_type: refty(&ty.element_type)?,
             minimum: ty.initial,
             maximum: ty.maximum,
         })
     }
 
-    pub fn memory_type(&self, ty: &wasmparser::MemoryType) -> Result<wasm_encoder::MemoryType> {
+    pub fn memory_type(ty: &wasmparser::MemoryType) -> Result<wasm_encoder::MemoryType> {
         Ok(wasm_encoder::MemoryType {
             memory64: ty.memory64,
             minimum: ty.initial,
@@ -434,39 +429,39 @@ impl<'a> Translator {
         })
     }
 
-    pub fn global_type(&self, ty: &wasmparser::GlobalType) -> Result<wasm_encoder::GlobalType> {
+    pub fn global_type(glob_type: &wasmparser::GlobalType) -> Result<wasm_encoder::GlobalType> {
         Ok(wasm_encoder::GlobalType {
-            val_type: self.ty(&ty.content_type)?,
-            mutable: ty.mutable,
+            val_type: ty(&glob_type.content_type)?,
+            mutable: glob_type.mutable,
         })
     }
 
-    pub fn tag_type(&self, ty: &wasmparser::TagType) -> Result<wasm_encoder::TagType> {
+    pub fn tag_type(tag_type: &wasmparser::TagType) -> Result<wasm_encoder::TagType> {
         Ok(wasm_encoder::TagType {
             kind: TagKind::Exception,
-            func_type_idx: ty.func_type_idx,
+            func_type_idx: tag_type.func_type_idx,
         })
     }
 
-    pub fn ty(&self, ty: &wasmparser::ValType) -> Result<ValType> {
+    pub fn ty(ty: &wasmparser::ValType) -> Result<ValType> {
         match ty {
             wasmparser::ValType::I32 => Ok(ValType::I32),
             wasmparser::ValType::I64 => Ok(ValType::I64),
             wasmparser::ValType::F32 => Ok(ValType::F32),
             wasmparser::ValType::F64 => Ok(ValType::F64),
             wasmparser::ValType::V128 => Ok(ValType::V128),
-            wasmparser::ValType::Ref(ty) => Ok(ValType::Ref(self.refty(ty)?)),
+            wasmparser::ValType::Ref(ty) => Ok(ValType::Ref(refty(ty)?)),
         }
     }
 
-    pub fn refty(&self, ty: &wasmparser::RefType) -> Result<RefType> {
+    pub fn refty(ty: &wasmparser::RefType) -> Result<RefType> {
         Ok(RefType {
             nullable: ty.nullable,
-            heap_type: self.heapty(&ty.heap_type)?,
+            heap_type: heapty(&ty.heap_type)?,
         })
     }
 
-    pub fn heapty(&self, ty: &wasmparser::HeapType) -> Result<HeapType> {
+    pub fn heapty(ty: &wasmparser::HeapType) -> Result<HeapType> {
         match ty {
             wasmparser::HeapType::Func => Ok(HeapType::Func),
             wasmparser::HeapType::Extern => Ok(HeapType::Extern),
@@ -474,16 +469,17 @@ impl<'a> Translator {
         }
     }
 
-    pub fn global(&self, global: Global) -> Result<(GlobalType, Instruction)> {
-        let ty = self.global_type(&global.ty)?;
-        let instr = self.const_instr_const_expr(&global.init_expr)?;
+    pub fn global<'a>(global: wasmparser::Global<'a>) -> Result<(GlobalType, Instruction<'a>)> {
+        let ty = global_type(&global.ty)?;
+        let init_expr: ConstExpr<'a> = global.init_expr;
+        let instr: Instruction<'a> = const_instr_const_expr(&init_expr)?;
         Ok((ty, instr))
     }
 
-    pub fn const_instr_const_expr(&self, e: &wasmparser::ConstExpr<'_>) -> Result<Instruction> {
+    pub fn const_instr_const_expr<'a>(e: &wasmparser::ConstExpr<'a>) -> Result<Instruction<'a>> {
         let mut e = e.get_operators_reader();
-        let op = e.read()?;
-        let instruction = self.op(&op)?;
+        let operator = e.read()?;
+        let instruction = op(&operator)?;
         match e.read()? {
             Operator::End if e.eof() => {}
             _ => return Err(Error::msg("invalid global init expression")),
@@ -492,14 +488,13 @@ impl<'a> Translator {
     }
 
     pub fn const_expr(
-        &self,
         e: &wasmparser::ConstExpr<'_>,
         ctx: ConstExprKind,
     ) -> Result<wasm_encoder::ConstExpr> {
         let mut e = e.get_operators_reader();
-        let op = e.read()?;
+        let operator = e.read()?;
         if let ConstExprKind::ElementFunction = ctx {
-            match op {
+            match operator {
                 Operator::RefFunc { .. }
                 | Operator::RefNull {
                     hty: wasmparser::HeapType::Func,
@@ -510,7 +505,7 @@ impl<'a> Translator {
             }
         }
         let mut offset_bytes = Vec::new();
-        self.op(&op)?.encode(&mut offset_bytes);
+        op(&operator)?.encode(&mut offset_bytes);
         match e.read()? {
             Operator::End if e.eof() => {}
             _ => return Err(Error::msg("no mutations applicable")),
@@ -518,14 +513,13 @@ impl<'a> Translator {
         Ok(wasm_encoder::ConstExpr::raw(offset_bytes))
     }
 
-    pub fn element<'b: 'a>(&'a self, element: wasmparser::Element<'b>) -> Result<ElementSegment> {
+    pub fn element<'a>(element: wasmparser::Element<'a>) -> Result<ElementSegment> {
         let mode: ElementMode<'a> = match &element.kind {
             ElementKind::Active {
                 table_index,
                 offset_expr,
             } => {
-                let offset_constexpr =
-                    self.const_expr(offset_expr, ConstExprKind::ElementOffset)?;
+                let offset_constexpr = const_expr(offset_expr, ConstExprKind::ElementOffset)?;
                 ElementMode::Active {
                     table: Some(*table_index),
                     offset: Box::leak(Box::new(offset_constexpr)),
@@ -534,7 +528,7 @@ impl<'a> Translator {
             ElementKind::Passive => ElementMode::Passive,
             ElementKind::Declared => ElementMode::Declared,
         };
-        let element_type = self.refty(&element.ty)?;
+        let element_type = refty(&element.ty)?;
         let elements = match element.items {
             ElementItems::Functions(reader) => {
                 let functions = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
@@ -543,7 +537,7 @@ impl<'a> Translator {
             ElementItems::Expressions(reader) => {
                 let exprs = reader
                     .into_iter()
-                    .map(|f| self.const_expr(&f?, ConstExprKind::ElementFunction))
+                    .map(|f| const_expr(&f?, ConstExprKind::ElementFunction))
                     .collect::<Result<Vec<_>, _>>()?;
                 Elements::Expressions(Box::leak(Box::new(exprs)))
             }
@@ -556,7 +550,7 @@ impl<'a> Translator {
     }
 
     #[allow(unused_variables)]
-    pub fn op(&self, op: &Operator<'_>) -> Result<Instruction<'a>> {
+    pub fn op<'a>(op: &Operator<'_>) -> Result<Instruction<'a>> {
         use wasm_encoder::Instruction as I;
 
         macro_rules! translate {
@@ -575,7 +569,7 @@ impl<'a> Translator {
 
             // This case is used to map, based on the name of the field, from the
             // wasmparser payload type to the wasm-encoder payload type through
-            // `Translator` as applicable.
+            // `translator` as applicable.
             (map $arg:ident tag_index) => (*$arg);
             (map $arg:ident function_index) => (*$arg);
             (map $arg:ident table) => (*$arg);
@@ -590,7 +584,7 @@ impl<'a> Translator {
             (map $arg:ident dst_mem) => (*$arg);
             (map $arg:ident data_index) => (*$arg);
             (map $arg:ident elem_index) => (*$arg);
-            (map $arg:ident blockty) => (self.block_type($arg)?);
+            (map $arg:ident blockty) => (block_type($arg)?);
             (map $arg:ident relative_depth) => (*$arg);
             (map $arg:ident targets) => ((
                 $arg
@@ -602,9 +596,9 @@ impl<'a> Translator {
             (map $arg:ident table_byte) => (());
             (map $arg:ident mem_byte) => (());
             (map $arg:ident flags) => (());
-            (map $arg:ident ty) => (self.ty($arg)?);
-            (map $arg:ident hty) => (self.heapty($arg)?);
-            (map $arg:ident memarg) => (self.memarg($arg)?);
+            (map $arg:ident ty) => (ty($arg)?);
+            (map $arg:ident hty) => (heapty($arg)?);
+            (map $arg:ident memarg) => (memarg($arg)?);
             (map $arg:ident local_index) => (*$arg);
             (map $arg:ident value) => ($arg);
             (map $arg:ident lane) => (*$arg);
@@ -638,15 +632,15 @@ impl<'a> Translator {
         for_each_operator!(translate)
     }
 
-    pub fn block_type(&self, ty: &wasmparser::BlockType) -> Result<BlockType> {
-        match ty {
+    pub fn block_type(block_type: &wasmparser::BlockType) -> Result<BlockType> {
+        match block_type {
             wasmparser::BlockType::Empty => Ok(BlockType::Empty),
-            wasmparser::BlockType::Type(ty) => Ok(BlockType::Result(self.ty(ty)?)),
+            wasmparser::BlockType::Type(val_type) => Ok(BlockType::Result(ty(val_type)?)),
             wasmparser::BlockType::FuncType(f) => Ok(BlockType::FunctionType(*f)),
         }
     }
 
-    pub fn memarg(&self, memarg: &wasmparser::MemArg) -> Result<MemArg> {
+    pub fn memarg(memarg: &wasmparser::MemArg) -> Result<MemArg> {
         Ok(MemArg {
             offset: memarg.offset,
             align: memarg.align.into(),
@@ -654,13 +648,13 @@ impl<'a> Translator {
         })
     }
 
-    pub fn data<'b: 'a>(&'a self, data: wasmparser::Data<'b>) -> Result<Data> {
+    pub fn data<'a>(data: wasmparser::Data<'a>) -> Result<Data> {
         let mode: DataMode<'a> = match &data.kind {
             DataKind::Active {
                 memory_index,
                 offset_expr,
             } => {
-                let offset_instr = self.const_instr_const_expr(offset_expr)?;
+                let offset_instr = const_instr_const_expr(offset_expr)?;
                 DataMode::Active {
                     memory_index: *memory_index,
                     offset_instr,
@@ -672,22 +666,22 @@ impl<'a> Translator {
         Ok(Data { mode, data })
     }
 
-    pub fn code(&self, body: FunctionBody<'_>) -> Result<Function> {
+    pub fn code(body: FunctionBody<'_>) -> Result<Function> {
         let locals = body
             .get_locals_reader()?
             .into_iter()
             .map(|local| {
-                let (cnt, ty) = local?;
-                Ok((cnt, self.ty(&ty)?))
+                let (cnt, val_type) = local?;
+                Ok((cnt, ty(&val_type)?))
             })
             .collect::<Result<Vec<_>>>()?;
         let mut func = Function::new(locals);
 
         let mut reader = body.get_operators_reader()?;
         reader.allow_memarg64(true);
-        for op in reader {
-            let op = op?;
-            func.instruction(&self.op(&op)?);
+        for operator in reader {
+            let operator = operator?;
+            func.instruction(&op(&operator)?);
         }
         Ok(func)
     }

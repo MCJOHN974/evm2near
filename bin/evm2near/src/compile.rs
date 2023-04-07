@@ -145,13 +145,13 @@ impl<'a> Compiler<'a> {
     }
 
     /// Emit an empty `_start` function to make all WebAssembly runtimes happy.
-    fn emit_wasm_start(self: &mut Compiler<'a>) {
+    fn emit_wasm_start(&mut self) {
         _ = self.emit_function(Some("_start".to_string()), vec![]);
     }
 
     /// Synthesizes a start function that initializes the EVM state with the
     /// correct configuration.
-    fn emit_evm_start(self: &mut Compiler<'a>) {
+    fn emit_evm_start(&mut self) {
         assert_ne!(self.evm_init_function, 0);
 
         self.evm_start_function = self.emit_function(
@@ -165,7 +165,7 @@ impl<'a> Compiler<'a> {
         );
     }
 
-    fn emit_abi_execute(self: &mut Compiler<'a>) {
+    fn emit_abi_execute(&mut self) {
         assert_ne!(self.evm_start_function, 0);
         assert_ne!(self.evm_exec_function, 0); // filled in during compile_cfg()
 
@@ -185,7 +185,7 @@ impl<'a> Compiler<'a> {
     /// contract's ABI, enabling users to directly call a contract method
     /// without going through the low-level `execute` EVM dispatcher.
     pub fn emit_abi_methods(
-        self: &mut Compiler<'a>,
+        &mut self,
         input_abi: Option<Functions>,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         assert_ne!(self.evm_start_function, 0);
@@ -478,7 +478,7 @@ subgraph cluster_wasm {{ label = \"wasm\"
     }
 
     /// Compiles the program's control-flow graph.
-    fn compile_cfg(self: &mut Compiler<'a>, program: &'a Program) {
+    fn compile_cfg(&mut self, program: &'a Program) {
         assert_ne!(self.evm_start_function, 0); // filled in during emit_start()
         assert_eq!(self.evm_exec_function, 0); // filled in below
 

@@ -249,7 +249,8 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
                 for tag in tag_section {
                     let tag = tag?;
                     let _tag_type = tag_type(&tag)?;
-                    panic!("unspecified section (spec doesnt have that one! WTF)");
+                    panic!("only wasm core - 1 specification is supported by near runtime");
+                    // https://github.com/near/nearcore/issues/8358#issuecomment-1383247423
                 }
             }
             Payload::GlobalSection(global_section) => {
@@ -285,7 +286,8 @@ pub fn parse(wasm: &Vec<u8>) -> Result<ModuleBuilder> {
                 }
             }
             Payload::DataCountSection { count: _, range: _ } => {
-                panic!("unspecified section (spec doesnt have that one! WTF)");
+                panic!("only wasm core - 1 specification is supported by near runtime");
+                // https://github.com/near/nearcore/issues/8358#issuecomment-1383247423
             }
             Payload::DataSection(data_section) => {
                 for d in data_section {

@@ -590,7 +590,6 @@ fn make_op_table(module: &ModuleBuilder) -> HashMap<Opcode, FunctionIndex> {
                 },
             }
         }
-        continue;
     }
     result
 }
@@ -607,7 +606,6 @@ fn find_runtime_function(module: &ModuleBuilder, func_name: &str) -> Option<Func
                 return Some(*index);
             }
         }
-        continue;
     }
     None // not found
 }
@@ -628,7 +626,6 @@ fn find_abi_buffer(module: &ModuleBuilder) -> Option<DataOffset> {
                 }
             }
         }
-        continue;
     }
     None // not found
 }

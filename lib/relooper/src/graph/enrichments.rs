@@ -1,4 +1,5 @@
 use crate::graph::cfg::{Cfg, CfgEdge, CfgLabel};
+use crate::graph::dominators;
 use crate::traversal::graph::bfs::Bfs;
 use crate::traversal::graph::dfs::{Dfs, DfsPost, DfsPostReverseInstantiator};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -65,55 +66,7 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
         node_ordering: &NodeOrdering<TLabel>,
         begin: TLabel,
     ) -> HashMap<TLabel, TLabel> /* map points from node id to id of its dominator */ {
-        let mut result = HashMap::<TLabel, TLabel>::new();
-        let mut bfs = VecDeque::<TLabel>::new();
-        let mut visited = HashSet::<TLabel>::new();
-        for &n in node_ordering.sequence() {
-            result.insert(n, begin);
-        }
-        bfs.push_back(begin); // should be next. upd: i dont think so
-        visited.insert(begin);
-        loop {
-            if bfs.is_empty() {
-                break;
-            }
-            let &cur_id = bfs.front().unwrap();
-            visited.insert(cur_id);
-            bfs.pop_front().unwrap();
-            Self::update_dominators(cfg, node_ordering, cur_id, begin, &mut result);
-            for &id in cfg.children(&cur_id) {
-                if !visited.contains(&id) {
-                    bfs.push_back(id);
-                }
-            }
-        }
-        result
-    }
-
-    fn update_dominators(
-        cfg: &Cfg<TLabel>,
-        node_ordering: &NodeOrdering<TLabel>,
-        cur_id: TLabel,
-        origin: TLabel,
-        result: &mut HashMap<TLabel, TLabel>,
-    ) {
-        let mut reachable_set = HashSet::<TLabel>::default();
-        for &node in node_ordering.sequence() {
-            reachable_set.insert(node);
-        }
-
-        let reached = Dfs::start_from(origin, |&n| {
-            let mut ch = cfg.children(&n);
-            ch.remove(&cur_id);
-            ch.into_iter().copied()
-        });
-        for id in reached {
-            reachable_set.remove(&id);
-        }
-        reachable_set.remove(&cur_id);
-        for id in reachable_set {
-            result.insert(id, cur_id);
-        }
+        dominators::domination_tree(cfg, begin)
     }
 }
 
@@ -121,18 +74,10 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
 /// Node A dominate node B if you can't reach B without visiting A. For example, entry node dominates all nodes.
 /// Each node have set of dominators. If B_set is set of node B dominators, node A will called Immediate Dominator of B
 /// if it is in B_set AND NOT dominate any other nodes from B_set.
-/// Each node have exactly one immediate dominator. Each node can be immediate dominator for any amount of nodes.
+/// Each node (except the origin) have exactly one immediate dominator. Each node can be immediate dominator for any amount of nodes.
 ///  
 /// Domination tree is a graph with nodes of CFG, but edges only from dominator to dominated nodes.
 /// Domination tree uniquely specified by given CFG
-///
-/// We build domination tree next way:
-/// 1) make an array of results (hash_map (dominated -> dominator)) and initialize it with entry node as dominator for every node.
-/// 2) Than we iterate in nodes in reverse postorder(?) and make next operation for each node:
-///   2.1) remove this node and all its edges from graph, go throw graph with dfs, and find all nodes unreachable without this nodes
-///   2.2) update immediate dominator for all unreachable nodes
-///
-/// Thanks to reverse postorder we will find immediate dominator for all nodes.
 ///
 pub struct DomTree<TLabel: CfgLabel> {
     dominates: HashMap<TLabel, HashSet<TLabel>>,

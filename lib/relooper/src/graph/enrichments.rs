@@ -1,4 +1,5 @@
 use crate::graph::cfg::{Cfg, CfgEdge, CfgLabel};
+use crate::graph::dominators;
 use crate::traversal::graph::bfs::Bfs;
 use crate::traversal::graph::dfs::{Dfs, DfsPost, DfsPostReverseInstantiator};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -45,10 +46,24 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
                 if_nodes.insert(n);
             }
         }
-
-        let domination_map = Self::domination_tree(&cfg, &node_ordering, cfg.entry);
+        println!("dominators started");
+        let domination_map = Self::domination_tree_john(&cfg, &node_ordering, cfg.entry);
+        println!("Dominators finished");
+        let domination_map_new = domination_map.clone();
+        let domination_map_old = Self::domination_tree(&cfg, &node_ordering, cfg.entry);
         let domination_vec = Vec::from_iter(domination_map);
         let domination = DomTree::from(domination_vec);
+
+
+
+        for node in cfg.nodes() {
+            let correct = domination_map_old[&node];
+            let new = domination_map_new[&node];
+            if correct != new {
+                println!("\n=============================================\nnode = {:?};\ncorrect dom = {:?};\nnew dom = {:?}\n=============================================\n", node, correct, new);
+            }
+        }
+        //aaaaaaaaaaaaaaaaaa
 
         Self {
             cfg,
@@ -59,6 +74,15 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
             if_nodes,
         }
     }
+
+    pub fn domination_tree_john(
+        cfg: &Cfg<TLabel>,
+        node_ordering: &NodeOrdering<TLabel>,
+        begin: TLabel,
+    ) -> HashMap<TLabel, TLabel> /* map points from node id to id of its dominator */ {
+        dominators::domination_tree(cfg, begin)
+    }
+
 
     pub fn domination_tree(
         cfg: &Cfg<TLabel>,
@@ -121,18 +145,10 @@ impl<TLabel: CfgLabel> EnrichedCfg<TLabel> {
 /// Node A dominate node B if you can't reach B without visiting A. For example, entry node dominates all nodes.
 /// Each node have set of dominators. If B_set is set of node B dominators, node A will called Immediate Dominator of B
 /// if it is in B_set AND NOT dominate any other nodes from B_set.
-/// Each node have exactly one immediate dominator. Each node can be immediate dominator for any amount of nodes.
+/// Each node (except the origin) have exactly one immediate dominator. Each node can be immediate dominator for any amount of nodes.
 ///  
 /// Domination tree is a graph with nodes of CFG, but edges only from dominator to dominated nodes.
 /// Domination tree uniquely specified by given CFG
-///
-/// We build domination tree next way:
-/// 1) make an array of results (hash_map (dominated -> dominator)) and initialize it with entry node as dominator for every node.
-/// 2) Than we iterate in nodes in reverse postorder(?) and make next operation for each node:
-///   2.1) remove this node and all its edges from graph, go throw graph with dfs, and find all nodes unreachable without this nodes
-///   2.2) update immediate dominator for all unreachable nodes
-///
-/// Thanks to reverse postorder we will find immediate dominator for all nodes.
 ///
 pub struct DomTree<TLabel: CfgLabel> {
     dominates: HashMap<TLabel, HashSet<TLabel>>,

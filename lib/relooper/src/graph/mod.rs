@@ -120,9 +120,9 @@ pub trait GraphCopy<'a, T: Eq + Hash + Copy + 'a>: Graph<'a, T, T> {
             if !visited.contains(x) {
                 let reachable: HashSet<T> =
                     transposed.reachable(&x).into_iter().map(|&&x| x).collect();
-                for r in reachable.clone() {
-                    visited.insert(r);
-                    transposed.remove_node(&r);
+                for r in reachable.iter() {
+                    transposed.remove_node(r);
+                    visited.insert(*r);
                 }
                 components.push(reachable);
             }

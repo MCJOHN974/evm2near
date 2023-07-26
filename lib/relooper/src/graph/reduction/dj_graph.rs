@@ -1,5 +1,4 @@
 use std::{
-    borrow::Borrow,
     collections::{HashMap, HashSet},
     hash::Hash,
 };
@@ -7,7 +6,7 @@ use std::{
 use crate::graph::{
     cfg::{Cfg, CfgLabel},
     domtree::DomTree,
-    GEdgeColl, Graph, GraphMut,
+    GEdgeColl, Graph,
 };
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -39,34 +38,6 @@ impl<'a, T: Eq + Hash + Clone + 'a> Graph<'a, T, DJEdge<T>> for DJGraph<T> {
 
     fn edges(&'a self) -> &HashMap<T, Self::EdgeColl> {
         &self.0
-    }
-}
-
-// todo remove if not needed
-impl<'a, T: Eq + Hash + Clone + 'a> GraphMut<'a, T, DJEdge<T>> for DJGraph<T> {
-    fn edge_mut(&mut self, label: &T) -> &mut Self::EdgeColl {
-        self.0.get_mut(label).expect("node should be present")
-    }
-
-    fn add_node(&mut self, _n: T) {
-        unreachable!()
-    }
-
-    fn remove_node<Q: ?Sized>(&mut self, n: &Q)
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq,
-    {
-        assert!(self.0.remove(n).is_some());
-    }
-
-    fn add_edge(&mut self, from: T, edge: Self::EdgeColl) {
-        assert!(self.0.insert(from, edge).is_none());
-    }
-
-    fn remove_edge(&mut self, from: T, _edge: &Self::EdgeColl) {
-        let _prev = self.0.remove(&from).expect("node should be present");
-        // assert_eq!(prev, edge); // todo
     }
 }
 

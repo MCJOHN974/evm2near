@@ -4,22 +4,38 @@ use std::collections::HashSet;
 
 use super::{domtree::DomTree, node_ordering::NodeOrdering, Graph};
 
-struct Lazy<T, F> {
-    init: Option<F>,
-    value: Option<T>,
+/// 'Option' in 'Thunk' version serves the only purpose:
+/// to overcome 'Default' requirement of 'mem::...' operations
+enum Lazy<T, F> {
+    Resolved(T),
+    Thunk(Option<F>),
 }
 
 impl<T, F: FnOnce() -> T> Lazy<T, F> {
     fn new(init: F) -> Self {
-        Self {
-            init: Some(init),
-            value: None,
-        }
+        Self::Thunk(Some(init))
     }
 
-    fn force(&mut self) -> &T {
-        self.value
-            .get_or_insert_with(|| (self.init.take().unwrap())())
+    pub fn force(&mut self) -> &T {
+        if let Self::Resolved(value) = self {
+            return value;
+        }
+
+        let mut thunk: Lazy<T, F> = Self::Thunk(None);
+        std::mem::swap(&mut thunk, self);
+
+        match thunk {
+            Self::Thunk(Some(f)) => {
+                let value = f();
+                *self = Self::Resolved(value);
+                match self {
+                    Self::Resolved(value) => value,
+                    Self::Thunk(_) => unreachable!("self re-assigned to Resolved"),
+                }
+            }
+            Self::Thunk(None) => unreachable!("Lazy was created with empty Thunk"),
+            Self::Resolved(_) => unreachable!("Handled by early return"),
+        }
     }
 }
 

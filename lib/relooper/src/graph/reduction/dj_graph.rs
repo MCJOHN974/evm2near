@@ -9,6 +9,10 @@ use crate::graph::{
     GEdgeColl, Graph,
 };
 
+/// 'D' edge is dominator tree edge (regardless of whether this edge is present in graph itself)
+/// 'J' edges are all other edges from graph itself
+/// 'JB' edge is graph "back edge" (where destination node dominates source node)
+/// 'JC' edge is graph "cross edge" (all other edges)
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum DJEdge<T> {
     D(T),
